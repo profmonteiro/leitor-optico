@@ -2,358 +2,915 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Leitor Óptico - Validação LaTeX</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#121212">
+  <title>Leitor Óptico - Cartão-Resposta</title>
+
   <style>
-    body { font-family: system-ui, sans-serif; text-align: center; background: #121212; color: #f5f5f5; margin: 0; padding: 12px; }
-    .container { max-width: 540px; margin: 0 auto; }
-    canvas { width: 100%; border-radius: 10px; border: 2px solid #333; background: #000; }
-    #status { padding: 12px; margin: 8px 0; border-radius: 8px; background: #1e1e1e; font-weight: bold; color: #00e676; font-size: 16px; }
-    .controles { display: flex; gap: 8px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
-    button { background: #2979ff; color: white; border: none; padding: 12px 18px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      text-align: center;
+      background: #121212;
+      color: #f5f5f5;
+      margin: 0;
+      padding: 12px;
+    }
+    .container { max-width: 650px; margin: 0 auto; }
+    h3 { margin: 8px 0 12px; }
+    #status {
+      padding: 12px;
+      margin: 8px 0;
+      border-radius: 8px;
+      background: #1e1e1e;
+      color: #ffd54f;
+      font-weight: 700;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+    #status.ok { color: #00e676; }
+    #status.erro { color: #ff5252; }
+    #video { display: none; }
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+      border: 2px solid #333;
+      background: #000;
+    }
+    .controles {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+      margin: 10px 0;
+      flex-wrap: wrap;
+    }
+    button {
+      background: #2979ff;
+      color: white;
+      border: none;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-weight: bold;
+      border-radius: 6px;
+      cursor: pointer;
+    }
     button.secundario { background: #424242; }
-    table { width: 100%; margin-top: 12px; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
-    th, td { border: 1px solid #333; padding: 10px 6px; font-size: 14px; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    table {
+      width: 100%;
+      margin-top: 12px;
+      border-collapse: collapse;
+      background: #1e1e1e;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 9px 5px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
     th { background: #262626; color: #bbb; }
     .preview-box { margin-top: 12px; }
-    .preview-box span { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
-    #canvasDebug { max-width: 340px; border: 1px solid #444; }
+    .preview-box span {
+      display: block;
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    #canvasDebug { max-width: 340px; margin: 0 auto; }
+    .nota {
+      color: #aaa;
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 10px 0;
+    }
   </style>
 </head>
+
 <body>
 <div class="container">
-  <h3>Leitor Óptico (Cartão LaTeX)</h3>
-  <div id="status">Carregando leitor...</div>
+  <h3>Leitor Óptico de Cartão-Resposta</h3>
 
-  <video id="video" playsinline muted autoplay style="display:none;"></video>
+  <div id="status">Preparando o leitor...</div>
+
+  <video id="video" playsinline muted autoplay></video>
   <canvas id="canvasOutput"></canvas>
 
   <div class="controles">
-    <button onclick="baixarCSV()">Baixar Planilha (CSV)</button>
-    <button class="secundario" onclick="permitirReleitura()">Ler Próxima / Relê Atual</button>
+    <button id="btnCSV" onclick="baixarCSV()">Baixar resultados (CSV)</button>
+    <button class="secundario" onclick="permitirReleitura()">Ler novamente</button>
+    <button class="secundario" onclick="reiniciarCamera()">Reiniciar câmera</button>
   </div>
+
+  <p class="nota">
+    Posicione o cartão inteiro dentro da imagem, com boa iluminação e sem inclinação excessiva.
+    O QR Code e os quatro marcadores pretos precisam estar visíveis.
+  </p>
 
   <table id="tabelaResultados">
     <thead>
       <tr>
         <th>ID Prova</th>
         <th>Gabarito</th>
-        <th>Lido (Q5 / Q6)</th>
-        <th>Nota</th>
+        <th>Respostas lidas</th>
+        <th>Acertos</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
 
   <div class="preview-box">
-    <span>Diagnóstico (bolinhas verificadas):</span>
+    <span>Diagnóstico: marcadores em verde e centros das alternativas em vermelho</span>
     <canvas id="canvasDebug"></canvas>
   </div>
 </div>
 
 <script>
+"use strict";
+
+/* ================================================================
+   CONFIGURAÇÃO DO CARTÃO
+   As coordenadas são relativas aos centros dos quatro marcadores.
+   Q5: gabarito C | Q6: gabarito A
+   ================================================================ */
+
 const COORDENADAS_QUESTOES = [
-  { numero: "Q5", y: 0.5242, opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 } },
-  { numero: "Q6", y: 0.6855, opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 } }
+  {
+    numero: "Q5",
+    y: 0.5242,
+    opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 }
+  },
+  {
+    numero: "Q6",
+    y: 0.6855,
+    opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 }
+  }
 ];
 
-let ultimoQRBloqueado = "";
-let resultados = [];
+const GABARITO_PADRAO = { Q5: "C", Q6: "A" };
 
-// Carrega apenas o jsQR (ultraleve, 45 KB) e abre a câmera na hora
-const scriptQR = document.createElement('script');
-scriptQR.src = 'https://jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
-scriptQR.onload = () => iniciarCamera();
-document.head.appendChild(scriptQR);
+let resultados = [];
+let ultimoQRBloqueado = "";
+let streamCamera = null;
+let framePendente = false;
+let ultimoProcessamento = 0;
+let bibliotecaCarregada = false;
+let cameraIniciada = false;
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvasOutput");
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
+const debugCanvas = document.getElementById("canvasDebug");
+const debugCtx = debugCanvas.getContext("2d");
+
+function status(mensagem, tipo = "") {
+  const elemento = document.getElementById("status");
+  elemento.textContent = mensagem;
+  elemento.className = tipo;
+}
+
+/* ================================================================
+   CARREGAMENTO DA BIBLIOTECA QR
+   ================================================================ */
+
+function carregarBibliotecaQR() {
+  status("Etapa 1/3: carregando biblioteca de leitura do QR Code...");
+
+  if (typeof window.jsQR === "function") {
+    bibliotecaCarregada = true;
+    iniciarCamera();
+    return;
+  }
+
+  const script = document.createElement("script");
+  script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js";
+  script.async = true;
+
+  script.onload = () => {
+    if (typeof window.jsQR !== "function") {
+      status("Erro: a biblioteca QR foi baixada, mas não foi inicializada.", "erro");
+      return;
+    }
+    bibliotecaCarregada = true;
+    iniciarCamera();
+  };
+
+  script.onerror = () => {
+    status(
+      "Não foi possível carregar a biblioteca QR. Verifique a conexão com a internet e recarregue a página.",
+      "erro"
+    );
+  };
+
+  document.head.appendChild(script);
+}
+
+/* ================================================================
+   CÂMERA
+   A página precisa estar em HTTPS (GitHub Pages já fornece HTTPS).
+   ================================================================ */
 
 async function iniciarCamera() {
-  const video = document.getElementById('video');
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
-    });
-    video.srcObject = stream;
-    await video.play();
-    document.getElementById('status').innerText = "Aponte para o cartão (4 cantos + QR)";
-    requestAnimationFrame(processarFrame);
-  } catch (err) {
-    document.getElementById('status').innerText = "Erro na câmera: " + err.message;
+  if (cameraIniciada) return;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    status(
+      "Este navegador não disponibilizou a câmera. Abra a página pelo HTTPS e use um navegador atualizado.",
+      "erro"
+    );
+    return;
   }
+
+  status("Etapa 2/3: solicitando acesso à câmera...");
+
+  try {
+    if (streamCamera) {
+      streamCamera.getTracks().forEach(track => track.stop());
+      streamCamera = null;
+    }
+
+    let stream;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+    } catch (primeiroErro) {
+      // Segunda tentativa para aparelhos que não aceitam as restrições ideais.
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "environment" }
+      });
+    }
+
+    streamCamera = stream;
+    video.srcObject = stream;
+
+    await new Promise((resolve, reject) => {
+      if (video.readyState >= 1 && video.videoWidth > 0) {
+        resolve();
+        return;
+      }
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error("Não foi possível inicializar o vídeo."));
+    });
+
+    await video.play();
+
+    cameraIniciada = true;
+    status("Etapa 3/3: câmera ativa. Aponte para o cartão e mantenha os quatro cantos visíveis.", "ok");
+
+    if (!framePendente) {
+      framePendente = true;
+      requestAnimationFrame(processarFrame);
+    }
+
+  } catch (erro) {
+    cameraIniciada = false;
+    let mensagem = erro && erro.message ? erro.message : String(erro);
+
+    if (erro && erro.name === "NotAllowedError") {
+      mensagem = "Permissão da câmera negada. Autorize o uso da câmera nas configurações do navegador.";
+    } else if (erro && erro.name === "NotFoundError") {
+      mensagem = "Nenhuma câmera foi encontrada neste aparelho.";
+    } else if (erro && erro.name === "NotReadableError") {
+      mensagem = "A câmera está sendo usada por outro aplicativo. Feche-o e tente novamente.";
+    } else if (erro && erro.name === "SecurityError") {
+      mensagem = "O navegador bloqueou a câmera. Abra esta página usando HTTPS.";
+    }
+
+    status("Erro ao iniciar a câmera: " + mensagem, "erro");
+  }
+}
+
+async function reiniciarCamera() {
+  cameraIniciada = false;
+  framePendente = false;
+
+  if (streamCamera) {
+    streamCamera.getTracks().forEach(track => track.stop());
+    streamCamera = null;
+  }
+
+  video.pause();
+  video.srcObject = null;
+
+  await iniciarCamera();
+}
+
+/* ================================================================
+   LEITURA DO QR CODE E EXTRAÇÃO DOS DADOS
+   Formato esperado:
+   ID-PROVA:MAT-CALC-V4;GAB:Q5C-Q6A
+   ================================================================ */
+
+function extrairDadosQR(textoQR) {
+  const dados = {
+    idProva: textoQR,
+    gabarito: { ...GABARITO_PADRAO }
+  };
+
+  const partes = String(textoQR).split(";");
+
+  for (const parteOriginal of partes) {
+    const parte = parteOriginal.trim();
+
+    if (parte.toUpperCase().startsWith("ID-PROVA:")) {
+      dados.idProva = parte.substring("ID-PROVA:".length).trim();
+    }
+
+    if (parte.toUpperCase().startsWith("GAB:")) {
+      const conteudo = parte.substring(4).trim();
+      const itens = conteudo.split(/[-,| ]+/);
+
+      for (const item of itens) {
+        const correspondencia = item.match(/^(Q\d+)([A-E])$/i);
+        if (correspondencia) {
+          const numero = correspondencia[1].toUpperCase();
+          const alternativa = correspondencia[2].toUpperCase();
+          dados.gabarito[numero] = alternativa;
+        }
+      }
+    }
+  }
+
+  return dados;
+}
+
+/* ================================================================
+   PROCESSAMENTO CONTÍNUO DOS QUADROS DA CÂMERA
+   ================================================================ */
+
+function processarFrame() {
+  if (!cameraIniciada || video.readyState < video.HAVE_CURRENT_DATA) {
+    framePendente = false;
+    if (cameraIniciada) {
+      framePendente = true;
+      requestAnimationFrame(processarFrame);
+    }
+    return;
+  }
+
+  const largura = video.videoWidth;
+  const altura = video.videoHeight;
+
+  if (!largura || !altura) {
+    framePendente = false;
+    requestAnimationFrame(processarFrame);
+    return;
+  }
+
+  if (canvas.width !== largura || canvas.height !== altura) {
+    canvas.width = largura;
+    canvas.height = altura;
+  }
+
+  ctx.drawImage(video, 0, 0, largura, altura);
+
+  const agora = performance.now();
+
+  // A leitura do QR não precisa ocorrer em todos os quadros.
+  if (agora - ultimoProcessamento > 180 && bibliotecaCarregada) {
+    ultimoProcessamento = agora;
+
+    try {
+      const imageData = ctx.getImageData(0, 0, largura, altura);
+      const qrCode = window.jsQR(
+        imageData.data,
+        imageData.width,
+        imageData.height,
+        { inversionAttempts: "attemptBoth" }
+      );
+
+      if (qrCode) {
+        desenharContornoQR(qrCode);
+
+        if (qrCode.data !== ultimoQRBloqueado) {
+          status("QR Code encontrado. Procurando os quatro marcadores...");
+
+          const leitura = detectarELerCartao(imageData, ctx, qrCode);
+
+          if (leitura) {
+            ultimoQRBloqueado = qrCode.data;
+            registrarResultado(leitura);
+
+            if (navigator.vibrate) navigator.vibrate(150);
+
+            status(
+              "Cartão lido: " + leitura.idProva +
+              " | Acertos: " + leitura.acertos + "/" + COORDENADAS_QUESTOES.length,
+              "ok"
+            );
+          } else {
+            status("QR Code encontrado, mas não localizei os quatro marcadores. Ajuste o enquadramento e a iluminação.");
+          }
+        }
+      } else if (!ultimoQRBloqueado) {
+        status("Câmera ativa. Procurando o QR Code...");
+      }
+    } catch (erro) {
+      console.error("Erro no processamento do quadro:", erro);
+      status("Erro durante a leitura da imagem: " + erro.message, "erro");
+    }
+  }
+
+  framePendente = true;
+  requestAnimationFrame(processarFrame);
+}
+
+function desenharContornoQR(qrCode) {
+  const p = qrCode.location;
+
+  ctx.strokeStyle = "#00b0ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(p.topLeftCorner.x, p.topLeftCorner.y);
+  ctx.lineTo(p.topRightCorner.x, p.topRightCorner.y);
+  ctx.lineTo(p.bottomRightCorner.x, p.bottomRightCorner.y);
+  ctx.lineTo(p.bottomLeftCorner.x, p.bottomLeftCorner.y);
+  ctx.closePath();
+  ctx.stroke();
+}
+
+/* ================================================================
+   DETECÇÃO DOS QUATRO MARCADORES PRETOS
+   Componentes conectados em imagem reduzida para economizar CPU.
+   ================================================================ */
+
+function detectarMarcadores(imageData, qrCode) {
+  const W = imageData.width;
+  const H = imageData.height;
+  const fator = 2;
+
+  const w = Math.floor(W / fator);
+  const h = Math.floor(H / fator);
+  const total = w * h;
+
+  const pixels = new Uint8Array(total);
+  const rgba = imageData.data;
+
+  // Limiar fixo para separar tinta escura do papel.
+  // É mais previsível que um limiar baseado na média global da foto.
+  const LIMIAR = 105;
+
+  for (let y = 0; y < h; y++) {
+    const origemY = y * fator;
+    for (let x = 0; x < w; x++) {
+      const origemX = x * fator;
+      const i = (origemY * W + origemX) * 4;
+      const luminancia = (rgba[i] * 77 + rgba[i + 1] * 150 + rgba[i + 2] * 29) >> 8;
+      pixels[y * w + x] = luminancia < LIMIAR ? 1 : 0;
+    }
+  }
+
+  const visitado = new Uint8Array(total);
+  const fila = new Int32Array(total);
+  const candidatos = [];
+
+  const qr = qrCode.location;
+  const qrCx = (qr.topLeftCorner.x + qr.bottomRightCorner.x) / 2;
+  const qrCy = (qr.topLeftCorner.y + qr.bottomRightCorner.y) / 2;
+  const qrTam = Math.hypot(
+    qr.topRightCorner.x - qr.topLeftCorner.x,
+    qr.topRightCorner.y - qr.topLeftCorner.y
+  );
+
+  const areaMinima = Math.max(45, total * 0.00025);
+  const areaMaxima = total * 0.025;
+
+  for (let inicio = 0; inicio < total; inicio++) {
+    if (!pixels[inicio] || visitado[inicio]) continue;
+
+    let inicioFila = 0;
+    let fimFila = 0;
+
+    fila[fimFila++] = inicio;
+    visitado[inicio] = 1;
+
+    let quantidade = 0;
+    let minX = w, maxX = 0, minY = h, maxY = 0;
+
+    while (inicioFila < fimFila) {
+      const indice = fila[inicioFila++];
+      const x = indice % w;
+      const y = Math.floor(indice / w);
+
+      quantidade++;
+
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+
+      // Limita componentes muito grandes, evitando consumir tempo excessivo.
+      if (quantidade > areaMaxima) break;
+
+      const vizinhos = [
+        indice - 1,
+        indice + 1,
+        indice - w,
+        indice + w
+      ];
+
+      for (let k = 0; k < 4; k++) {
+        const proximo = vizinhos[k];
+
+        if (proximo < 0 || proximo >= total) continue;
+
+        const px = proximo % w;
+        const py = Math.floor(proximo / w);
+
+        // Impede que o vizinho da esquerda/direita atravesse uma linha.
+        if (Math.abs(px - x) + Math.abs(py - y) !== 1) continue;
+
+        if (pixels[proximo] && !visitado[proximo]) {
+          visitado[proximo] = 1;
+          fila[fimFila++] = proximo;
+        }
+      }
+    }
+
+    if (quantidade < areaMinima || quantidade > areaMaxima) continue;
+
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    const proporcao = bw / bh;
+    const preenchimento = quantidade / (bw * bh);
+
+    if (proporcao < 0.70 || proporcao > 1.43) continue;
+    if (preenchimento < 0.48) continue;
+
+    const centroX = ((minX + maxX) / 2) * fator;
+    const centroY = ((minY + maxY) / 2) * fator;
+
+    // Exclui componentes próximos ao QR Code.
+    if (Math.hypot(centroX - qrCx, centroY - qrCy) < qrTam * 0.62) continue;
+
+    candidatos.push({
+      x: centroX,
+      y: centroY,
+      area: quantidade,
+      rect: {
+        x: minX * fator,
+        y: minY * fator,
+        w: bw * fator,
+        h: bh * fator
+      }
+    });
+  }
+
+  if (candidatos.length < 4) return null;
+
+  // Os marcadores quadrados impressos tendem a ser os maiores componentes
+  // compactos que não pertencem ao QR Code.
+  candidatos.sort((a, b) => b.area - a.area);
+
+  // Mantém candidatos espacialmente distintos.
+  const selecionados = [];
+  for (const c of candidatos) {
+    const muitoProximo = selecionados.some(s =>
+      Math.hypot(s.x - c.x, s.y - c.y) < Math.min(s.rect.w, c.rect.w) * 1.2
+    );
+    if (!muitoProximo) selecionados.push(c);
+    if (selecionados.length === 4) break;
+  }
+
+  if (selecionados.length !== 4) return null;
+
+  return selecionados;
+}
+
+/* ================================================================
+   LEITURA DAS RESPOSTAS
+   ================================================================ */
+
+function detectarELerCartao(imageData, contexto, qrCode) {
+  const W = imageData.width;
+  const H = imageData.height;
+
+  const marcadores = detectarMarcadores(imageData, qrCode);
+  if (!marcadores) return null;
+
+  // Ordena os pontos ao redor do centro do cartão.
+  const centroX = marcadores.reduce((s, p) => s + p.x, 0) / 4;
+  const centroY = marcadores.reduce((s, p) => s + p.y, 0) / 4;
+
+  marcadores.sort((a, b) =>
+    Math.atan2(a.y - centroY, a.x - centroX) -
+    Math.atan2(b.y - centroY, b.x - centroX)
+  );
+
+  // Encontra o marcador superior direito: é o mais próximo do QR Code
+  // na geometria do cartão fornecida.
+  const qr = qrCode.location;
+  const qrCx = (qr.topLeftCorner.x + qr.bottomRightCorner.x) / 2;
+  const qrCy = (qr.topLeftCorner.y + qr.bottomRightCorner.y) / 2;
+
+  let indiceSuperiorDireito = 0;
+  let menorDistancia = Infinity;
+
+  marcadores.forEach((p, i) => {
+    const distancia = Math.hypot(p.x - qrCx, p.y - qrCy);
+    if (distancia < menorDistancia) {
+      menorDistancia = distancia;
+      indiceSuperiorDireito = i;
+    }
+  });
+
+  // Na ordenação angular (sentido horário em coordenadas de tela):
+  // superior direito -> inferior direito -> inferior esquerdo -> superior esquerdo.
+  const superiorDireito = marcadores[indiceSuperiorDireito];
+  const inferiorDireito = marcadores[(indiceSuperiorDireito + 1) % 4];
+  const inferiorEsquerdo = marcadores[(indiceSuperiorDireito + 2) % 4];
+  const superiorEsquerdo = marcadores[(indiceSuperiorDireito + 3) % 4];
+
+  // Homografia: transforma coordenadas normalizadas (u,v) do cartão
+  // em coordenadas reais da imagem, compensando perspectiva.
+  const transformar = criarHomografia(
+    [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 }
+    ],
+    [
+      superiorEsquerdo,
+      superiorDireito,
+      inferiorDireito,
+      inferiorEsquerdo
+    ]
+  );
+
+  if (!transformar) return null;
+
+  // Desenha os quatro marcadores detectados.
+  contexto.save();
+  contexto.strokeStyle = "#00e676";
+  contexto.lineWidth = 5;
+  marcadores.forEach(p => {
+    contexto.strokeRect(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
+  });
+  contexto.restore();
+
+  // Prepara o diagnóstico.
+  debugCanvas.width = W;
+  debugCanvas.height = H;
+  debugCtx.putImageData(imageData, 0, 0);
+
+  const dadosQR = extrairDadosQR(qrCode.data);
+  const respostas = [];
+  let acertos = 0;
+
+  const larguraCartao = Math.hypot(
+    superiorDireito.x - superiorEsquerdo.x,
+    superiorDireito.y - superiorEsquerdo.y
+  );
+
+  const raio = Math.max(5, Math.round(larguraCartao * 0.013));
+  const limiarEscuro = 115;
+
+  for (const questao of COORDENADAS_QUESTOES) {
+    const leituras = [];
+
+    for (const [letra, u] of Object.entries(questao.opcoes)) {
+      const ponto = transformar(u, questao.y);
+      if (!ponto || ponto.x < 0 || ponto.x >= W || ponto.y < 0 || ponto.y >= H) {
+        leituras.push({ letra, percentual: 0, ponto });
+        continue;
+      }
+
+      let escuros = 0;
+      let totalPixels = 0;
+
+      for (let dy = -raio; dy <= raio; dy++) {
+        for (let dx = -raio; dx <= raio; dx++) {
+          if (dx * dx + dy * dy > raio * raio) continue;
+
+          const px = Math.round(ponto.x + dx);
+          const py = Math.round(ponto.y + dy);
+
+          if (px < 0 || px >= W || py < 0 || py >= H) continue;
+
+          const indice = (py * W + px) * 4;
+          const lum = (
+            imageData.data[indice] * 77 +
+            imageData.data[indice + 1] * 150 +
+            imageData.data[indice + 2] * 29
+          ) >> 8;
+
+          totalPixels++;
+          if (lum < limiarEscuro) escuros++;
+        }
+      }
+
+      leituras.push({
+        letra,
+        percentual: totalPixels ? escuros / totalPixels : 0,
+        ponto
+      });
+    }
+
+    leituras.sort((a, b) => b.percentual - a.percentual);
+
+    const primeira = leituras[0];
+    const segunda = leituras[1];
+    let marcada = "-";
+
+    // Exige preenchimento significativo e diferença em relação à segunda opção.
+    if (primeira && primeira.percentual > 0.34 &&
+        (!segunda || primeira.percentual > segunda.percentual * 1.25)) {
+      marcada = primeira.letra;
+    } else if (primeira && segunda &&
+               primeira.percentual > 0.34 && segunda.percentual > 0.34) {
+      marcada = "DUPLA";
+    }
+
+    // Desenha os centros das cinco alternativas.
+    for (const leitura of leituras) {
+      if (!leitura.ponto) continue;
+      debugCtx.beginPath();
+      debugCtx.arc(leitura.ponto.x, leitura.ponto.y, raio + 2, 0, Math.PI * 2);
+      debugCtx.lineWidth = 2;
+      debugCtx.strokeStyle = leitura.letra === marcada ? "#00e676" : "#ff5252";
+      debugCtx.stroke();
+    }
+
+    respostas.push(questao.numero + ":" + marcada);
+
+    if (marcada === dadosQR.gabarito[questao.numero]) {
+      acertos++;
+    }
+  }
+
+  return {
+    idProva: dadosQR.idProva,
+    gabaritoTexto: Object.entries(dadosQR.gabarito)
+      .map(([q, a]) => q + ":" + a)
+      .join(" "),
+    respostasTexto: respostas.join(" | "),
+    acertos: acertos
+  };
+}
+
+/* ================================================================
+   CÁLCULO DA HOMOGRAFIA
+   ================================================================ */
+
+function criarHomografia(origem, destino) {
+  // Resolve oito incógnitas de uma homografia 3x3, fixando h33 = 1.
+  const A = [];
+  const B = [];
+
+  for (let i = 0; i < 4; i++) {
+    const u = origem[i].x;
+    const v = origem[i].y;
+    const x = destino[i].x;
+    const y = destino[i].y;
+
+    A.push([u, v, 1, 0, 0, 0, -u * x, -v * x]);
+    B.push(x);
+    A.push([0, 0, 0, u, v, 1, -u * y, -v * y]);
+    B.push(y);
+  }
+
+  const h = resolverSistemaLinear(A, B);
+  if (!h) return null;
+
+  return function(u, v) {
+    const denominador = h[6] * u + h[7] * v + 1;
+    if (Math.abs(denominador) < 1e-9) return null;
+
+    return {
+      x: (h[0] * u + h[1] * v + h[2]) / denominador,
+      y: (h[3] * u + h[4] * v + h[5]) / denominador
+    };
+  };
+}
+
+function resolverSistemaLinear(A, B) {
+  const n = B.length;
+  const M = A.map((linha, i) => linha.concat(B[i]));
+
+  for (let coluna = 0; coluna < n; coluna++) {
+    let pivo = coluna;
+
+    for (let linha = coluna + 1; linha < n; linha++) {
+      if (Math.abs(M[linha][coluna]) > Math.abs(M[pivo][coluna])) {
+        pivo = linha;
+      }
+    }
+
+    if (Math.abs(M[pivo][coluna]) < 1e-10) return null;
+
+    [M[coluna], M[pivo]] = [M[pivo], M[coluna]];
+
+    const divisor = M[coluna][coluna];
+    for (let j = coluna; j <= n; j++) {
+      M[coluna][j] /= divisor;
+    }
+
+    for (let linha = 0; linha < n; linha++) {
+      if (linha === coluna) continue;
+
+      const fator = M[linha][coluna];
+      for (let j = coluna; j <= n; j++) {
+        M[linha][j] -= fator * M[coluna][j];
+      }
+    }
+  }
+
+  return M.map(linha => linha[n]);
+}
+
+/* ================================================================
+   RESULTADOS E EXPORTAÇÃO CSV
+   ================================================================ */
+
+function registrarResultado(item) {
+  resultados.push(item);
+
+  const tbody = document.querySelector("#tabelaResultados tbody");
+  const tr = document.createElement("tr");
+
+  const valores = [
+    item.idProva,
+    item.gabaritoTexto,
+    item.respostasTexto,
+    item.acertos + "/" + COORDENADAS_QUESTOES.length
+  ];
+
+  valores.forEach(valor => {
+    const td = document.createElement("td");
+    td.textContent = valor;
+    tr.appendChild(td);
+  });
+
+  tbody.prepend(tr);
 }
 
 function permitirReleitura() {
   ultimoQRBloqueado = "";
-  document.getElementById('status').innerText = "Pronto! Aponte para o cartão.";
+  status("Pronto para nova leitura. Aponte para o cartão.", "ok");
 }
 
-function extrairDadosQR(textoQR) {
-  let idProva = textoQR;
-  let gabarito = { Q5: "C", Q6: "A" };
-  textoQR.split(";").forEach(p => {
-    if (p.startsWith("ID-PROVA:")) idProva = p.replace("ID-PROVA:", "").trim();
-    if (p.startsWith("GAB:")) {
-      p.replace("GAB:", "").split("-").forEach(item => {
-        const m = item.match(/^(Q\d+)([A-E])$/i);
-        if (m) gabarito[m.toUpperCase()] = m.toUpperCase();
-      });
-    }
-  });
-  return { idProva, gabarito };
-}
-function processarFrame() {
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('canvasOutput');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-  if (video.readyState === video.HAVE_ENOUGH_DATA && typeof jsQR !== 'undefined') {
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const qrCode = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
-
-    if (qrCode) {
-      ctx.strokeStyle = "#00b0ff";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(qrCode.location.topLeftCorner.x, qrCode.location.topLeftCorner.y);
-      ctx.lineTo(qrCode.location.topRightCorner.x, qrCode.location.topRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomRightCorner.x, qrCode.location.bottomRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomLeftCorner.x, qrCode.location.bottomLeftCorner.y);
-      ctx.closePath();
-      ctx.stroke();
-
-      if (qrCode.data !== ultimoQRBloqueado) {
-        const leitura = detectarELerNativo(imageData, ctx, qrCode);
-        if (leitura) {
-          ultimoQRBloqueado = qrCode.data;
-          registrarResultado(leitura);
-          if (navigator.vibrate) navigator.vibrate();
-          document.getElementById('status').innerText = `Lido: ${leitura.idProva} | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length}`;
-        }
-      }
-    }
-  }
-  requestAnimationFrame(processarFrame);
-}
-
-// Motor óptico 100% nativo em JavaScript (zero bibliotecas pesadas)
-function detectarELerNativo(imageData, ctx, qrCode) {
-  const W = imageData.width;
-  const H = imageData.height;
-  const data = imageData.data;
-
-  // 1. Converte para luminância e calcula limiar adaptativo global rápido
-  const gray = new Uint8Array(W * H);
-  let soma = 0;
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    const lum = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
-    gray[j] = lum;
-    soma += lum;
-  }
-  const limiar = (soma / (W * H)) * 0.68; // Tudo abaixo disso é tinta preta
-
-  // 2. Encontra componentes conectados (manchas pretas) para achar os 4 marcadores de canto
-  const visitado = new Uint8Array(W * H);
-  const qrCx = (qrCode.location.topLeftCorner.x + qrCode.location.bottomRightCorner.x) / 2;
-  const qrCy = (qrCode.location.topLeftCorner.y + qrCode.location.bottomRightCorner.y) / 2;
-  const qrTam = Math.hypot(
-    qrCode.location.topRightCorner.x - qrCode.location.topLeftCorner.x,
-    qrCode.location.topRightCorner.y - qrCode.location.topLeftCorner.y
-  );
-
-  const minPixels = (W * H) * 0.00025;
-  const maxPixels = (W * H) * 0.018;
-  let candidatos = [];
-  const stackX = new Int32Array(maxPixels + 100);
-  const stackY = new Int32Array(maxPixels + 100);
-
-  for (let y = 10; y < H - 10; y += 2) {
-    for (let x = 10; x < W - 10; x += 2) {
-      const idx = y * W + x;
-      if (gray[idx] < limiar && !visitado[idx]) {
-        let top = 0;
-        stackX[top] = x;
-        stackY[top] = y;
-        visitado[idx] = 1;
-
-        let count = 0, minX = x, maxX = x, minY = y, maxY = y;
-        while (top >= 0) {
-          const cx = stackX[top];
-          const cy = stackY[top];
-          top--;
-          count++;
-
-          if (cx < minX) minX = cx;
-          if (cx > maxX) maxX = cx;
-          if (cy < minY) minY = cy;
-          if (cy > maxY) maxY = cy;
-
-          if (count > maxPixels) break;
-
-          // Vizinhos 4-conectados
-          const viz = [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]];
-          for (let k = 0; k < 4; k++) {
-            const nx = viz[k], ny = viz[k];
-            if (nx > 0 && nx < W && ny > 0 && ny < H) {
-              const nIdx = ny * W + nx;
-              if (!visitado[nIdx] && gray[nIdx] < limiar) {
-                visitado[nIdx] = 1;
-                top++;
-                stackX[top] = nx;
-                stackY[top] = ny;
-              }
-            }
-          }
-        }
-
-        if (count >= minPixels && count <= maxPixels) {
-          const bw = maxX - minX + 1;
-          const bh = maxY - minY + 1;
-          const ratio = bw / bh;
-          const centX = (minX + maxX) / 2;
-          const centY = (minY + maxY) / 2;
-
-          // Ignora elementos dentro do QR Code e aceita quadrados/cantoneiras nos cantos
-          if (Math.hypot(centX - qrCx, centY - qrCy) > qrTam * 0.65 && ratio >= 0.68 && ratio <= 1.45) {
-            candidatos.push({ x: centX, y: centY, area: count, rect: { x: minX, y: minY, w: bw, h: bh } });
-          }
-        }
-      }
-    }
-  }
-
-  if (candidatos.length > 4) {
-    candidatos.sort((a, b) => b.area - a.area);
-    candidatos = candidatos.slice(0, 4);
-  }
-  if (candidatos.length !== 4) return null;
-
-  // Desenha os 4 cantos detectados em verde
-  ctx.strokeStyle = "#00e676";
-  ctx.lineWidth = 5;
-  candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.w, c.rect.h));
-
-  // Ordena os 4 cantos em sentido horário e orienta pelo QR Code (Superior Direito)
-  const mX = candidatos.reduce((s, c) => s + c.x, 0) / 4;
-  const mY = candidatos.reduce((s, c) => s + c.y, 0) / 4;
-  candidatos.sort((a, b) => Math.atan2(a.y - mY, a.x - mX) - Math.atan2(b.y - mY, b.x - mX));
-
-  let idxQR = 0, menorD = Infinity;
-  candidatos.forEach((c, idx) => {
-    const d = Math.hypot(c.x - qrCx, c.y - qrCy);
-    if (d < menorD) { menorD = d; idxQR = idx; }
-  });
-
-  const supDir = candidatos[idxQR];
-  const infDir = candidatos[(idxQR + 1) % 4];
-  const infEsq = candidatos[(idxQR + 2) % 4];
-  const supEsq = candidatos[(idxQR + 3) % 4];
-
-  // 3. Mapeamento bilinear direto dos pontos (sem precisar retificar a imagem inteira!)
-  function mapearPonto(u, v) {
-    const topX = supEsq.x + (supDir.x - supEsq.x) * u;
-    const topY = supEsq.y + (supDir.y - supEsq.y) * u;
-    const botX = infEsq.x + (infDir.x - infEsq.x) * u;
-    const botY = infEsq.y + (infDir.y - infEsq.y) * u;
-    return {
-      x: Math.round(topX + (botX - topX) * v),
-      y: Math.round(topY + (botY - topY) * v)
-    };
-  }
-
-  // Prepara canvas de diagnóstico com o recorte da imagem atual
-  const debugCanvas = document.getElementById('canvasDebug');
-  debugCanvas.width = W;
-  debugCanvas.height = H;
-  const dCtx = debugCanvas.getContext('2d');
-  dCtx.putImageData(imageData, 0, 0);
-
-  const raioAmostra = Math.max(4, Math.round(Math.hypot(supDir.x - supEsq.x, supDir.y - supEsq.y) * 0.013));
-  const { idProva, gabarito } = extrairDadosQR(qrCode.data);
-  let respostasLidas = [];
-  let acertos = 0;
-
-  COORDENADAS_QUESTOES.forEach(q => {
-    let melhor = { letra: "-", escuros: 0, pt: null };
-    let segundo = 0;
-    let totalPixels = 0;
-
-    for (const [letra, propX] of Object.entries(q.opcoes)) {
-      const pt = mapearPonto(propX, q.y);
-      let escuros = 0;
-      totalPixels = 0;
-
-      for (let dy = -raioAmostra; dy <= raioAmostra; dy++) {
-        for (let dx = -raioAmostra; dx <= raioAmostra; dx++) {
-          if (dx * dx + dy * dy <= raioAmostra * raioAmostra) {
-            const px = pt.x + dx;
-            const py = pt.y + dy;
-            if (px >= 0 && px < W && py >= 0 && py < H) {
-              totalPixels++;
-              if (gray[py * W + px] < limiar) escuros++;
-            }
-          }
-        }
-      }
-
-      // Desenha mira vermelha no diagnóstico
-      dCtx.strokeStyle = "red";
-      dCtx.lineWidth = 3;
-      dCtx.beginPath();
-      dCtx.arc(pt.x, pt.y, raioAmostra + 2, 0, Math.PI * 2);
-      dCtx.stroke();
-
-      if (escuros > melhor.escuros) {
-        segundo = melhor.escuros;
-        melhor = { letra, escuros, pt };
-      } else if (escuros > segundo) {
-        segundo = escuros;
-      }
-    }
-
-    let marcada = "-";
-    if (melhor.escuros > totalPixels * 0.45 && melhor.escuros > segundo * 1.35) {
-      marcada = melhor.letra;
-      dCtx.strokeStyle = "#00e676";
-      dCtx.lineWidth = 5;
-      dCtx.beginPath();
-      dCtx.arc(melhor.pt.x, melhor.pt.y, raioAmostra + 6, 0, Math.PI * 2);
-      dCtx.stroke();
-    } else if (melhor.escuros > totalPixels * 0.45 && segundo > totalPixels * 0.45) {
-      marcada = "DUPLA";
-    }
-
-    respostasLidas.push(`${q.numero}:${marcada}`);
-    if (marcada === gabarito[q.numero]) acertos++;
-  });
-
-  return {
-    idProva,
-    gabaritoTexto: Object.entries(gabarito).map(([k, v]) => `${k}:${v}`).join(" "),
-    respostasTexto: respostasLidas.join(" | "),
-    acertos
-  };
-}
-
-function registrarResultado(item) {
-  resultados.push(item);
-  const tbody = document.querySelector("#tabelaResultados tbody");
-  const tr = document.createElement("tr");
-  tr.innerHTML = `<td><strong>${item.idProva}</strong></td><td>${item.gabaritoTexto}</td><td>${item.respostasTexto}</td><td><strong>${item.acertos}/${COORDENADAS_QUESTOES.length}</strong></td>`;
-  tbody.prepend(tr);
+function escaparCSV(valor) {
+  const texto = String(valor ?? "");
+  return '"' + texto.replace(/"/g, '""') + '"';
 }
 
 function baixarCSV() {
-  let csv = "ID_Prova;Gabarito_QR;Respostas_Lidas;Acertos\n";
-  resultados.forEach(r => { csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos}\n`; });
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  if (!resultados.length) {
+    status("Ainda não há resultados para exportar.", "erro");
+    return;
+  }
+
+  const linhas = [
+    ["ID_Prova", "Gabarito_QR", "Respostas_Lidas", "Acertos"].join(";")
+  ];
+
+  resultados.forEach(r => {
+    linhas.push([
+      escaparCSV(r.idProva),
+      escaparCSV(r.gabaritoTexto),
+      escaparCSV(r.respostasTexto),
+      escaparCSV(r.acertos + "/" + COORDENADAS_QUESTOES.length)
+    ].join(";"));
+  });
+
+  // BOM UTF-8 para facilitar a abertura no Excel.
+  const blob = new Blob(["\uFEFF" + linhas.join("\r\n")], {
+    type: "text/csv;charset=utf-8;"
+  });
+
+  const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "validacao_optica.csv";
+  link.href = url;
+  link.download = "resultados_correcao_optica.csv";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
+
+/* ================================================================
+   INICIALIZAÇÃO
+   ================================================================ */
+
+window.addEventListener("load", carregarBibliotecaQR);
+
+window.addEventListener("beforeunload", () => {
+  if (streamCamera) {
+    streamCamera.getTracks().forEach(track => track.stop());
+  }
+});
 </script>
 </body>
 </html>
