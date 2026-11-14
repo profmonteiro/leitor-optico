@@ -23,7 +23,7 @@
 <body>
 <div class="container">
   <h3>Leitor Óptico (Cartão LaTeX)</h3>
-  <div id="status">Baixando bibliotecas (aguarde 5 segundos)...</div>
+  <div id="status">Abrindo câmera...</div>
 
   <video id="video" playsinline style="display:none;"></video>
   <canvas id="canvasOutput"></canvas>
@@ -52,7 +52,13 @@
 </div>
 
 <script>
+let cvPronto = false;
+let ultimoQRBloqueado = "";
+let resultados = [];
+
 function carregarBibliotecas() {
+  iniciarCamera(); // Abre a câmera imediatamente sem esperar o download
+
   const s1 = document.createElement('script');
   s1.src = 'https://jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
   document.head.appendChild(s1);
@@ -60,14 +66,16 @@ function carregarBibliotecas() {
   const s2 = document.createElement('script');
   s2.src = 'https://opencv.org' + '/4.8.0/opencv.js';
   s2.async = true;
-  s2.onload = () => {
-    cv['onRuntimeInitialized'] = () => {
-      cvPronto = true;
-      document.getElementById('status').innerText = "Abrindo câmera...";
-      iniciarCamera();
-    };
-  };
   document.head.appendChild(s2);
+
+  // Verifica continuamente até que cv.Mat esteja 100% operacional na memória
+  const checarMotor = setInterval(() => {
+    if (typeof cv !== 'undefined' && typeof cv.Mat === 'function' && typeof jsQR !== 'undefined') {
+      cvPronto = true;
+      document.getElementById('status').innerText = "Aponte a câmera para o cartão (4 cantos + QR)";
+      clearInterval(checarMotor);
+    }
+  }, 500);
 }
 
 const COORDENADAS_QUESTOES = [
@@ -79,10 +87,6 @@ const WARP_W = 1280;
 const WARP_H = 620;
 const RAIO_PX = 25;
 
-let cvPronto = false;
-let ultimoQRBloqueado = "";
-let resultados = [];
-
 async function iniciarCamera() {
   const video = document.getElementById('video');
   try {
@@ -91,7 +95,7 @@ async function iniciarCamera() {
     });
     video.srcObject = stream;
     video.play();
-    document.getElementById('status').innerText = "Aponte a câmera para o cartão (4 cantos + QR)";
+    document.getElementById('status').innerText = "Câmera ativa! Finalizando motor óptico...";
     requestAnimationFrame(processarFrame);
   } catch (err) {
     document.getElementById('status').innerText = "Erro na câmera: " + err.message;
@@ -122,32 +126,34 @@ function processarFrame() {
   const canvas = document.getElementById('canvasOutput');
   const ctx = canvas.getContext('2d');
 
-  if (video.readyState === video.HAVE_ENOUGH_DATA && cvPronto && typeof jsQR !== 'undefined') {
+  if (video.readyState === video.HAVE_ENOUGH_DATA) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const qrCode = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+    if (cvPronto) {
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const qrCode = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
 
-    if (qrCode) {
-      ctx.strokeStyle = "#00b0ff";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(qrCode.location.topLeftCorner.x, qrCode.location.topLeftCorner.y);
-      ctx.lineTo(qrCode.location.topRightCorner.x, qrCode.location.topRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomRightCorner.x, qrCode.location.bottomRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomLeftCorner.x, qrCode.location.bottomLeftCorner.y);
-      ctx.closePath();
-      ctx.stroke();
+      if (qrCode) {
+        ctx.strokeStyle = "#00b0ff";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(qrCode.location.topLeftCorner.x, qrCode.location.topLeftCorner.y);
+        ctx.lineTo(qrCode.location.topRightCorner.x, qrCode.location.topRightCorner.y);
+        ctx.lineTo(qrCode.location.bottomRightCorner.x, qrCode.location.bottomRightCorner.y);
+        ctx.lineTo(qrCode.location.bottomLeftCorner.x, qrCode.location.bottomLeftCorner.y);
+        ctx.closePath();
+        ctx.stroke();
 
-      if (qrCode.data !== ultimoQRBloqueado) {
-        const leitura = detectarELerCartao(canvas, ctx, qrCode);
-        if (leitura) {
-          ultimoQRBloqueado = qrCode.data;
-          registrarResultado(leitura);
-          if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
-          document.getElementById('status').innerText = `Lido: ${leitura.idProva} | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length}`;
+        if (qrCode.data !== ultimoQRBloqueado) {
+          const leitura = detectarELerCartao(canvas, ctx, qrCode);
+          if (leitura) {
+            ultimoQRBloqueado = qrCode.data;
+            registrarResultado(leitura);
+            if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+            document.getElementById('status').innerText = `Lido: ${leitura.idProva} | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length}`;
+          }
         }
       }
     }
