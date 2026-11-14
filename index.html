@@ -4,8 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Leitor Óptico - Validação LaTeX</title>
-   <script src="https://jsdelivr.net"></script>
-  <script async src="https://opencv.org" onload="onOpenCvReady();"></script>
   <style>
     body { font-family: system-ui, sans-serif; text-align: center; background: #121212; color: #f5f5f5; margin: 0; padding: 12px; }
     .container { max-width: 540px; margin: 0 auto; }
@@ -25,7 +23,7 @@
 <body>
 <div class="container">
   <h3>Leitor Óptico (Cartão LaTeX)</h3>
-  <div id="status">Carregando motor de visão computacional...</div>
+  <div id="status">Baixando bibliotecas (aguarde 5 segundos)...</div>
 
   <video id="video" playsinline style="display:none;"></video>
   <canvas id="canvasOutput"></canvas>
@@ -47,7 +45,6 @@
     <tbody></tbody>
   </table>
 
-  <!-- Miniatura de diagnóstico mostrando o cartão retificado e os pontos de leitura -->
   <div class="preview-box">
     <span>Diagnóstico da última leitura (bolinhas verificadas):</span>
     <canvas id="canvasDebug"></canvas>
@@ -55,49 +52,40 @@
 </div>
 
 <script>
-// =========================================================================
-// COORDENADAS CALCULADAS EXATAMENTE A PARTIR DO SEU CÓDIGO TIKZ
-// Retângulo âncora: X de -0.15 a 12.65 (W=12.80) | Y de -0.35 a 5.85 (H=6.20)
-// =========================================================================
+// Carregamento seguro das bibliotecas externas
+function carregarBibliotecas() {
+  const s1 = document.createElement('script');
+  s1.src = 'https://cdn.jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
+  document.head.appendChild(s1);
+
+  const s2 = document.createElement('script');
+  s2.src = 'https://docs.opencv.org' + '/4.8.0/opencv.js';
+  s2.async = true;
+  s2.onload = () => {
+    cv['onRuntimeInitialized'] = () => {
+      cvPronto = true;
+      document.getElementById('status').innerText = "Abrindo câmera...";
+      iniciarCamera();
+    };
+  };
+  s2.onerror = () => {
+    document.getElementById('status').innerText = "Falha ao baixar OpenCV. Verifique sua internet.";
+  };
+  document.head.appendChild(s2);
+}
+
 const COORDENADAS_QUESTOES = [
-  {
-    numero: "Q5",
-    y: 0.5242, // (5.85 - 2.6) / 6.20
-    opcoes: {
-      A: 0.3242, // (4.0 - (-0.15)) / 12.80
-      B: 0.4414, // (5.5 - (-0.15)) / 12.80
-      C: 0.5586, // (7.0 - (-0.15)) / 12.80
-      D: 0.6758, // (8.5 - (-0.15)) / 12.80
-      E: 0.7930  // (10.0 - (-0.15)) / 12.80
-    }
-  },
-  {
-    numero: "Q6",
-    y: 0.6855, // (5.85 - 1.6) / 6.20
-    opcoes: {
-      A: 0.3242,
-      B: 0.4414,
-      C: 0.5586,
-      D: 0.6758,
-      E: 0.7930
-    }
-  }
+  { numero: "Q5", y: 0.5242, opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 } },
+  { numero: "Q6", y: 0.6855, opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 } }
 ];
 
-// Proporção exata do retângulo retificado (12.80 x 6.20 -> 1280 x 620 px)
 const WARP_W = 1280;
 const WARP_H = 620;
-const RAIO_PX = 25; // Corresponde exatamente ao raio 0.25cm na escala 100px/cm
+const RAIO_PX = 25;
 
 let cvPronto = false;
 let ultimoQRBloqueado = "";
 let resultados = [];
-
-function onOpenCvReady() {
-  cvPronto = true;
-  document.getElementById('status').innerText = "Abrindo câmera...";
-  iniciarCamera();
-}
 
 async function iniciarCamera() {
   const video = document.getElementById('video');
@@ -110,7 +98,7 @@ async function iniciarCamera() {
     document.getElementById('status').innerText = "Aponte a câmera para o cartão (4 cantos + QR)";
     requestAnimationFrame(processarFrame);
   } catch (err) {
-    document.getElementById('status').innerText = "Erro ao acessar câmera. Verifique permissões HTTPS.";
+    document.getElementById('status').innerText = "Erro na câmera: " + err.message;
   }
 }
 
@@ -119,17 +107,13 @@ function permitirReleitura() {
   document.getElementById('status').innerText = "Pronto! Aponte para o cartão.";
 }
 
-// Extrai o gabarito dinâmico de strings como "ID-PROVA:MAT-CALC-V2;GAB:Q5C-Q6A"
 function extrairDadosQR(textoQR) {
   let idProva = textoQR;
-  let gabarito = { Q5: "C", Q6: "A" }; // Fallback padrão
-
-  const partes = textoQR.split(";");
-  partes.forEach(p => {
+  let gabarito = { Q5: "C", Q6: "A" };
+  textoQR.split(";").forEach(p => {
     if (p.startsWith("ID-PROVA:")) idProva = p.replace("ID-PROVA:", "").trim();
     if (p.startsWith("GAB:")) {
-      const chaves = p.replace("GAB:", "").split("-");
-      chaves.forEach(item => {
+      p.replace("GAB:", "").split("-").forEach(item => {
         const match = item.match(/^(Q\d+)([A-E])$/i);
         if (match) gabarito[match[1].toUpperCase()] = match[2].toUpperCase();
       });
@@ -137,13 +121,12 @@ function extrairDadosQR(textoQR) {
   });
   return { idProva, gabarito };
 }
-
 function processarFrame() {
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvasOutput');
   const ctx = canvas.getContext('2d');
 
-  if (video.readyState === video.HAVE_ENOUGH_DATA && cvPronto) {
+  if (video.readyState === video.HAVE_ENOUGH_DATA && cvPronto && typeof jsQR !== 'undefined') {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -152,7 +135,6 @@ function processarFrame() {
     const qrCode = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
 
     if (qrCode) {
-      // Desenha contorno azul ao redor do QR Code detectado
       ctx.strokeStyle = "#00b0ff";
       ctx.lineWidth = 4;
       ctx.beginPath();
@@ -189,7 +171,6 @@ function detectarELerCartao(canvas, ctx, textoQR) {
   let hierarchy = new cv.Mat();
   cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-  // Área mínima e máxima proporcional à resolução da câmera para os quadrados de 0.7x0.7cm
   const areaFrame = canvas.width * canvas.height;
   const minArea = areaFrame * 0.0003;
   const maxArea = areaFrame * 0.025;
@@ -198,24 +179,16 @@ function detectarELerCartao(canvas, ctx, textoQR) {
   for (let i = 0; i < contours.size(); ++i) {
     let cnt = contours.get(i);
     let area = cv.contourArea(cnt);
-
     if (area > minArea && area < maxArea) {
       let peri = cv.arcLength(cnt, true);
       let approx = new cv.Mat();
       cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
-
       if (approx.rows === 4 && cv.isContourConvex(approx)) {
         let rect = cv.boundingRect(approx);
         let ratio = rect.width / rect.height;
-        // Verifica se é quadrado e se o preenchimento interno é sólido (> 75% preto)
         let extent = area / (rect.width * rect.height);
         if (ratio >= 0.75 && ratio <= 1.33 && extent > 0.75) {
-          candidatos.push({
-            x: rect.x + rect.width / 2,
-            y: rect.y + rect.height / 2,
-            area: area,
-            rect: rect
-          });
+          candidatos.push({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, area: area, rect: rect });
         }
       }
       approx.delete();
@@ -223,7 +196,6 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     cnt.delete();
   }
 
-  // Se houver mais de 4 candidatos (ex: algum bloco interno do QR), pega os 4 de área mais semelhante entre si
   if (candidatos.length > 4) {
     candidatos.sort((a, b) => b.area - a.area);
     candidatos = candidatos.slice(0, 4);
@@ -234,18 +206,15 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     return null;
   }
 
-  // Desenha os 4 cantos detectados em verde na tela
   ctx.strokeStyle = "#00e676";
   ctx.lineWidth = 4;
   candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.width, c.rect.height));
 
-  // Ordena: [Superior-Esq, Superior-Dir, Inferior-Dir, Inferior-Esq]
   candidatos.sort((a, b) => a.y - b.y);
   let topo = candidatos.slice(0, 2).sort((a, b) => a.x - b.x);
   let base = candidatos.slice(2, 4).sort((a, b) => a.x - b.x);
   let cantos = [topo[0], topo[1], base[1], base[0]];
 
-  // Validação geométrica básica (evita falsos positivos se os 4 pontos estiverem colineares)
   let larguraTopo = Math.hypot(cantos[1].x - cantos[0].x, cantos[1].y - cantos[0].y);
   let alturaEsq = Math.hypot(cantos[3].x - cantos[0].x, cantos[3].y - cantos[0].y);
   if (larguraTopo < canvas.width * 0.25 || alturaEsq < canvas.height * 0.15) {
@@ -253,15 +222,13 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     return null;
   }
 
-  // Retifica a perspectiva para 1280 x 620 px
   let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    cantos[0].x, cantos[0].y,
-    cantos[1].x, cantos[1].y,
-    cantos[2].x, cantos[2].y,
-    cantos[3].x, cantos[3].y
+    cantos[0].x, cantos[0].y, cantos[1].x, cantos[1].y,
+    cantos[2].x, cantos[2].y, cantos[3].x, cantos[3].y
   ]);
   let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, WARP_W, 0, WARP_W, WARP_H, 0, WARP_H]);
   let M = cv.getPerspectiveTransform(srcTri, dstTri);
+
   let warpedThresh = new cv.Mat();
   let warpedColor = new cv.Mat();
   cv.warpPerspective(thresh, warpedThresh, M, new cv.Size(WARP_W, WARP_H));
@@ -278,14 +245,11 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     for (const [letra, propX] of Object.entries(q.opcoes)) {
       let cx = Math.round(propX * WARP_W);
       let cy = Math.round(q.y * WARP_H);
-
-      // Usa um quadrado interno inscrito no círculo (r * 0.75) para ignorar a borda preta da circunferência
       let rInterno = Math.round(RAIO_PX * 0.75);
       let roi = warpedThresh.roi(new cv.Rect(cx - rInterno, cy - rInterno, rInterno * 2, rInterno * 2));
       let pixelsPretos = cv.countNonZero(roi);
       roi.delete();
 
-      // Desenha círculo guia na imagem de diagnóstico
       cv.circle(warpedColor, new cv.Point(cx, cy), RAIO_PX, new cv.Scalar(255, 0, 0, 255), 2);
 
       if (pixelsPretos > melhor.pixels) {
@@ -296,13 +260,11 @@ function detectarELerCartao(canvas, ctx, textoQR) {
       }
     }
 
-    // Exige > 48% de preenchimento interno para considerar marcado a caneta (evita falsos positivos da letra impressa)
     let areaInterna = Math.pow(Math.round(RAIO_PX * 0.75) * 2, 2);
     let marcada = "-";
 
     if (melhor.pixels > areaInterna * 0.48 && melhor.pixels > segundoMelhor * 1.35) {
       marcada = melhor.letra;
-      // Destaca em verde a bolinha detectada como marcada na imagem de diagnóstico
       cv.circle(warpedColor, new cv.Point(melhor.cx, melhor.cy), RAIO_PX + 4, new cv.Scalar(0, 230, 118, 255), 4);
     } else if (melhor.pixels > areaInterna * 0.48 && segundoMelhor > areaInterna * 0.48) {
       marcada = "DUPLA";
@@ -312,9 +274,7 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     if (marcada === gabarito[q.numero]) acertos++;
   });
 
-  // Exibe a imagem retificada no canvas de diagnóstico abaixo da tabela
   cv.imshow('canvasDebug', warpedColor);
-
   src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
   srcTri.delete(); dstTri.delete(); M.delete(); warpedThresh.delete(); warpedColor.delete();
 
@@ -330,27 +290,21 @@ function registrarResultado(item) {
   resultados.push(item);
   const tbody = document.querySelector("#tabelaResultados tbody");
   const tr = document.createElement("tr");
-  tr.innerHTML = `
-    <td><strong>${item.idProva}</strong></td>
-    <td>${item.gabaritoTexto}</td>
-    <td>${item.respostasTexto}</td>
-    <td><strong>${item.acertos}/${COORDENADAS_QUESTOES.length}</strong></td>
-  `;
+  tr.innerHTML = `<td><strong>${item.idProva}</strong></td><td>${item.gabaritoTexto}</td><td>${item.respostasTexto}</td><td><strong>${item.acertos}/${COORDENADAS_QUESTOES.length}</strong></td>`;
   tbody.prepend(tr);
 }
 
 function baixarCSV() {
   let csv = "ID_Prova;Gabarito_QR;Respostas_Lidas;Acertos\n";
-  resultados.forEach(r => {
-    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos}\n`;
-  });
+  resultados.forEach(r => { csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos}\n`; });
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = "validacao_optica.csv";
   link.click();
 }
+
+carregarBibliotecas();
 </script>
 </body>
 </html>
-
