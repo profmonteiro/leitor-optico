@@ -52,14 +52,13 @@
 </div>
 
 <script>
-// Carregamento seguro das bibliotecas externas
 function carregarBibliotecas() {
   const s1 = document.createElement('script');
-  s1.src = 'https://cdn.jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
+  s1.src = 'https://jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
   document.head.appendChild(s1);
 
   const s2 = document.createElement('script');
-  s2.src = 'https://docs.opencv.org' + '/4.8.0/opencv.js';
+  s2.src = 'https://opencv.org' + '/4.8.0/opencv.js';
   s2.async = true;
   s2.onload = () => {
     cv['onRuntimeInitialized'] = () => {
@@ -67,9 +66,6 @@ function carregarBibliotecas() {
       document.getElementById('status').innerText = "Abrindo câmera...";
       iniciarCamera();
     };
-  };
-  s2.onerror = () => {
-    document.getElementById('status').innerText = "Falha ao baixar OpenCV. Verifique sua internet.";
   };
   document.head.appendChild(s2);
 }
@@ -146,7 +142,7 @@ function processarFrame() {
       ctx.stroke();
 
       if (qrCode.data !== ultimoQRBloqueado) {
-        const leitura = detectarELerCartao(canvas, ctx, qrCode.data);
+        const leitura = detectarELerCartao(canvas, ctx, qrCode);
         if (leitura) {
           ultimoQRBloqueado = qrCode.data;
           registrarResultado(leitura);
@@ -159,7 +155,7 @@ function processarFrame() {
   requestAnimationFrame(processarFrame);
 }
 
-function detectarELerCartao(canvas, ctx, textoQR) {
+function detectarELerCartao(canvas, ctx, qrCode) {
   let src = cv.imread(canvas);
   let gray = new cv.Mat();
   let thresh = new cv.Mat();
@@ -171,27 +167,37 @@ function detectarELerCartao(canvas, ctx, textoQR) {
   let hierarchy = new cv.Mat();
   cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
+  const qrCx = (qrCode.location.topLeftCorner.x + qrCode.location.bottomRightCorner.x) / 2;
+  const qrCy = (qrCode.location.topLeftCorner.y + qrCode.location.bottomRightCorner.y) / 2;
+  const qrLargura = Math.hypot(
+    qrCode.location.topRightCorner.x - qrCode.location.topLeftCorner.x,
+    qrCode.location.topRightCorner.y - qrCode.location.topLeftCorner.y
+  );
+
   const areaFrame = canvas.width * canvas.height;
-  const minArea = areaFrame * 0.0003;
-  const maxArea = areaFrame * 0.025;
+  const minArea = areaFrame * 0.00025;
+  const maxArea = areaFrame * 0.02;
 
   let candidatos = [];
   for (let i = 0; i < contours.size(); ++i) {
     let cnt = contours.get(i);
     let area = cv.contourArea(cnt);
+
     if (area > minArea && area < maxArea) {
-      let peri = cv.arcLength(cnt, true);
-      let approx = new cv.Mat();
-      cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
-      if (approx.rows === 4 && cv.isContourConvex(approx)) {
-        let rect = cv.boundingRect(approx);
-        let ratio = rect.width / rect.height;
-        let extent = area / (rect.width * rect.height);
-        if (ratio >= 0.75 && ratio <= 1.33 && extent > 0.75) {
-          candidatos.push({ x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, area: area, rect: rect });
-        }
+      let rect = cv.boundingRect(cnt);
+      let cx = rect.x + rect.width / 2;
+      let cy = rect.y + rect.height / 2;
+      let ratio = rect.width / rect.height;
+
+      let distQR = Math.hypot(cx - qrCx, cy - qrCy);
+      if (distQR < qrLargura * 0.65) {
+        cnt.delete();
+        continue;
       }
-      approx.delete();
+
+      if (ratio >= 0.70 && ratio <= 1.40) {
+        candidatos.push({ x: cx, y: cy, area: area, rect: rect });
+      }
     }
     cnt.delete();
   }
@@ -207,24 +213,33 @@ function detectarELerCartao(canvas, ctx, textoQR) {
   }
 
   ctx.strokeStyle = "#00e676";
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 5;
   candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.width, c.rect.height));
 
-  candidatos.sort((a, b) => a.y - b.y);
-  let topo = candidatos.slice(0, 2).sort((a, b) => a.x - b.x);
-  let base = candidatos.slice(2, 4).sort((a, b) => a.x - b.x);
-  let cantos = [topo[0], topo[1], base[1], base[0]];
+  const centroX = candidatos.reduce((s, c) => s + c.x, 0) / 4;
+  const centroY = candidatos.reduce((s, c) => s + c.y, 0) / 4;
+  candidatos.sort((a, b) => Math.atan2(a.y - centroY, a.x - centroX) - Math.atan2(b.y - centroY, b.x - centroX));
 
-  let larguraTopo = Math.hypot(cantos[1].x - cantos[0].x, cantos[1].y - cantos[0].y);
-  let alturaEsq = Math.hypot(cantos[3].x - cantos[0].x, cantos[3].y - cantos[0].y);
-  if (larguraTopo < canvas.width * 0.25 || alturaEsq < canvas.height * 0.15) {
-    src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
-    return null;
-  }
+  let idxMaisPertoQR = 0;
+  let menorDist = Infinity;
+  candidatos.forEach((c, idx) => {
+    let d = Math.hypot(c.x - qrCx, c.y - qrCy);
+    if (d < menorDist) {
+      menorDist = d;
+      idxMaisPertoQR = idx;
+    }
+  });
+
+  const supDir = candidatos[idxMaisPertoQR];
+  const infDir = candidatos[(idxMaisPertoQR + 1) % 4];
+  const infEsq = candidatos[(idxMaisPertoQR + 2) % 4];
+  const supEsq = candidatos[(idxMaisPertoQR + 3) % 4];
 
   let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    cantos[0].x, cantos[0].y, cantos[1].x, cantos[1].y,
-    cantos[2].x, cantos[2].y, cantos[3].x, cantos[3].y
+    supEsq.x, supEsq.y,
+    supDir.x, supDir.y,
+    infDir.x, infDir.y,
+    infEsq.x, infEsq.y
   ]);
   let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, WARP_W, 0, WARP_W, WARP_H, 0, WARP_H]);
   let M = cv.getPerspectiveTransform(srcTri, dstTri);
@@ -234,7 +249,7 @@ function detectarELerCartao(canvas, ctx, textoQR) {
   cv.warpPerspective(thresh, warpedThresh, M, new cv.Size(WARP_W, WARP_H));
   cv.warpPerspective(src, warpedColor, M, new cv.Size(WARP_W, WARP_H));
 
-  const { idProva, gabarito } = extrairDadosQR(textoQR);
+  const { idProva, gabarito } = extrairDadosQR(qrCode.data);
   let respostasLidas = [];
   let acertos = 0;
 
@@ -263,10 +278,10 @@ function detectarELerCartao(canvas, ctx, textoQR) {
     let areaInterna = Math.pow(Math.round(RAIO_PX * 0.75) * 2, 2);
     let marcada = "-";
 
-    if (melhor.pixels > areaInterna * 0.48 && melhor.pixels > segundoMelhor * 1.35) {
+    if (melhor.pixels > areaInterna * 0.45 && melhor.pixels > segundoMelhor * 1.35) {
       marcada = melhor.letra;
       cv.circle(warpedColor, new cv.Point(melhor.cx, melhor.cy), RAIO_PX + 4, new cv.Scalar(0, 230, 118, 255), 4);
-    } else if (melhor.pixels > areaInterna * 0.48 && segundoMelhor > areaInterna * 0.48) {
+    } else if (melhor.pixels > areaInterna * 0.45 && segundoMelhor > areaInterna * 0.45) {
       marcada = "DUPLA";
     }
 
