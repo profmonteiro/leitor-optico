@@ -27,7 +27,7 @@
       font-size: 16px;
       line-height: 1.4;
     }
-    #status.ok { color: #00e676; border: 2px solid #00e676; font-size: 18px; }
+    #status.ok { color: #00e676; border: 2px solid #00e676; font-size: 19px; }
     #status.erro { color: #ff5252; }
     #video { display: none; }
     canvas {
@@ -83,7 +83,7 @@
 </head>
 <body>
 <div class="container">
-  <h3>Leitor Óptico de Provas</h3>
+  <h3>Leitor Óptico (v2 - Anel + Nota)</h3>
   <div id="status">Carregando leitor...</div>
 
   <video id="video" playsinline muted autoplay></video>
@@ -100,15 +100,16 @@
       <tr>
         <th>ID Prova</th>
         <th>Gabarito</th>
-        <th>Lido</th>
-        <th>Nota</th>
+        <th>Respostas Lidas</th>
+        <th>Acertos</th>
+        <th>Nota (Max 3,0)</th>
       </tr>
     </thead>
     <tbody></tbody>
   </table>
 
   <div class="preview-box">
-    <span>Diagnóstico (verifique se as bolinhas verdes batem com as marcadas):</span>
+    <span>Diagnóstico (verifique se SE/SD/ID/IE e os anéis batem):</span>
     <canvas id="canvasDebug"></canvas>
   </div>
 </div>
@@ -116,7 +117,7 @@
 <script>
 "use strict";
 
-// Configuração das questões, coordenadas TikZ e pesos (pontos)
+// Regra de pontuação ponderada e coordenadas exatas do TikZ
 const COORDENADAS_QUESTOES = [
   {
     numero: "Q5",
@@ -154,7 +155,7 @@ function status(mensagem, tipo = "") {
 
 function carregarBibliotecaQR() {
   const script = document.createElement("script");
-  script.src = "https://cdn.jsdelivr.net" + "/npm/jsqr@1.4.0/dist/jsQR.min.js";
+  script.src = "https://jsdelivr.net" + "/npm/jsqr@1.4.0/dist/jsQR.min.js";
   script.onload = () => iniciarCamera();
   script.onerror = () => status("Erro de conexão ao carregar leitor QR.", "erro");
   document.head.appendChild(script);
@@ -197,7 +198,7 @@ function extrairDadosQR(textoQR) {
     if (p.startsWith("GAB:")) {
       p.replace("GAB:", "").split("-").forEach(item => {
         const m = item.match(/^(Q\d+)([A-E])$/i);
-        if (m) gabarito[m.toUpperCase()] = m.toUpperCase();
+        if (m) gabarito[m[1].toUpperCase()] = m[2].toUpperCase();
       });
     }
   });
@@ -228,9 +229,9 @@ function processarFrame() {
         if (leitura) {
           ultimoQRBloqueado = qrCode.data;
           registrarResultado(leitura);
-          if (navigator.vibrate) navigator.vibrate();
+          if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
           status(
-            `NOTA: ${leitura.notaFormatada} / ${PONTUACAO_MAXIMA.toFixed(1).replace(".", ",")} pts  (${leitura.respostasTexto})`,
+            `NOTA: ${leitura.notaFormatada} / ${PONTUACAO_MAXIMA.toFixed(1).replace(".", ",")} pts | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length} (${leitura.respostasTexto})`,
             "ok"
           );
         }
@@ -245,7 +246,6 @@ function detectarELerCartao(imageData, qrCode) {
   const H = imageData.height;
   const data = imageData.data;
 
-  // 1. Mapa de luminância (0 = preto, 255 = branco)
   const gray = new Uint8Array(W * H);
   let soma = 0;
   for (let i = 0, j = 0; i < data.length; i += 4, j++) {
@@ -253,10 +253,8 @@ function detectarELerCartao(imageData, qrCode) {
     gray[j] = lum;
     soma += lum;
   }
-  const mediaGlobal = soma / (W * H);
-  const limiar = mediaGlobal * 0.65;
+  const limiar = (soma / (W * H)) * 0.65;
 
-  // 2. Localiza os 4 marcadores pretos dos cantos
   const visitado = new Uint8Array(W * H);
   const qrCx = (qrCode.location.topLeftCorner.x + qrCode.location.bottomRightCorner.x) / 2;
   const qrCy = (qrCode.location.topLeftCorner.y + qrCode.location.bottomRightCorner.y) / 2;
@@ -265,14 +263,14 @@ function detectarELerCartao(imageData, qrCode) {
     qrCode.location.topRightCorner.y - qrCode.location.topLeftCorner.y
   );
 
-  const minPixels = (W * H) * 0.0002;
-  const maxPixels = (W * H) * 0.02;
+  const minPixels = (W * H) * 0.00018;
+  const maxPixels = (W * H) * 0.022;
   let candidatos = [];
   const stackX = new Int32Array(maxPixels + 200);
   const stackY = new Int32Array(maxPixels + 200);
 
-  for (let y = 8; y < H - 8; y += 2) {
-    for (let x = 8; x < W - 8; x += 2) {
+  for (let y = 6; y < H - 6; y++) {
+    for (let x = 6; x < W - 6; x++) {
       const idx = y * W + x;
       if (gray[idx] < limiar && !visitado[idx]) {
         let top = 0;
@@ -295,7 +293,7 @@ function detectarELerCartao(imageData, qrCode) {
 
           const viz = [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]];
           for (let k = 0; k < 4; k++) {
-            const nx = viz[k], ny = viz[k];
+            const nx = viz[k][0], ny = viz[k][1];
             if (nx > 0 && nx < W && ny > 0 && ny < H) {
               const nIdx = ny * W + nx;
               if (!visitado[nIdx] && gray[nIdx] < limiar) {
@@ -315,8 +313,7 @@ function detectarELerCartao(imageData, qrCode) {
           const centX = (minX + maxX) / 2;
           const centY = (minY + maxY) / 2;
 
-          // Ignora elementos do QR Code e exige formato quadrado (0.65 a 1.50)
-          if (Math.hypot(centX - qrCx, centY - qrCy) > qrTam * 0.75 && ratio >= 0.65 && ratio <= 1.50) {
+          if (Math.hypot(centX - qrCx, centY - qrCy) > qrTam * 0.70 && ratio >= 0.65 && ratio <= 1.50) {
             candidatos.push({ x: centX, y: centY, area: count, rect: { x: minX, y: minY, w: bw, h: bh } });
           }
         }
@@ -334,12 +331,11 @@ function detectarELerCartao(imageData, qrCode) {
   ctx.lineWidth = 5;
   candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.w, c.rect.h));
 
-  // 3. Ordena os 4 cantos em sentido horário na tela (atan2 com Y para baixo)
+  // Ordena os 4 cantos em sentido horário na tela
   const mX = candidatos.reduce((s, c) => s + c.x, 0) / 4;
   const mY = candidatos.reduce((s, c) => s + c.y, 0) / 4;
   candidatos.sort((a, b) => Math.atan2(a.y - mY, a.x - mX) - Math.atan2(b.y - mY, b.x - mX));
 
-  // O QR Code fica sempre próximo ao canto SUPERIOR DIREITO do cartão
   let idxQR = 0, menorD = Infinity;
   candidatos.forEach((c, idx) => {
     const d = Math.hypot(c.x - qrCx, c.y - qrCy);
@@ -366,19 +362,21 @@ function detectarELerCartao(imageData, qrCode) {
   debugCanvas.height = H;
   debugCtx.putImageData(imageData, 0, 0);
 
-  // Desenha rótulos nos cantos no diagnóstico para conferência visual
   debugCtx.fillStyle = "#00e676";
-  debugCtx.font = "bold 20px sans-serif";
+  debugCtx.font = "bold 22px sans-serif";
   debugCtx.fillText("SE", supEsq.x, supEsq.y);
   debugCtx.fillText("SD", supDir.x, supDir.y);
   debugCtx.fillText("ID", infDir.x, infDir.y);
   debugCtx.fillText("IE", infEsq.x, infEsq.y);
 
+  // Raio externo proporcional à bolinha de 0.25cm (0.25 / 12.80 = 0.0195 da largura do cartão)
   const larguraCartaoPx = Math.hypot(supDir.x - supEsq.x, supDir.y - supEsq.y);
-  const raioAmostra = Math.max(5, Math.round(larguraCartaoPx * 0.014));
+  const raioExterno = Math.max(8, Math.round(larguraCartaoPx * 0.017));
+  const raioInterno = Math.max(3, Math.round(raioExterno * 0.42)); // Ignora o miolo da letra impressa!
 
   const { idProva, gabarito } = extrairDadosQR(qrCode.data);
   let respostasLidas = [];
+  let acertos = 0;
   let notaTotal = 0;
 
   COORDENADAS_QUESTOES.forEach(q => {
@@ -387,53 +385,60 @@ function detectarELerCartao(imageData, qrCode) {
     for (const [letra, propX] of Object.entries(q.opcoes)) {
       const pt = mapearPonto(propX, q.y);
       let somaLuminancia = 0;
-      let totalPixels = 0;
+      let totalPixelsAnel = 0;
 
-      for (let dy = -raioAmostra; dy <= raioAmostra; dy++) {
-        for (let dx = -raioAmostra; dx <= raioAmostra; dx++) {
-          if (dx * dx + dy * dy <= raioAmostra * raioAmostra) {
+      // Amostragem em ANEL CIRCULAR: evita a letra no centro e a borda preta externa
+      for (let dy = -raioExterno; dy <= raioExterno; dy++) {
+        for (let dx = -raioExterno; dx <= raioExterno; dx++) {
+          const dist2 = dx * dx + dy * dy;
+          if (dist2 >= raioInterno * raioInterno && dist2 <= raioExterno * raioExterno) {
             const px = pt.x + dx;
             const py = pt.y + dy;
             if (px >= 0 && px < W && py >= 0 && py < H) {
               somaLuminancia += gray[py * W + px];
-              totalPixels++;
+              totalPixelsAnel++;
             }
           }
         }
       }
 
-      // Escuridão média de 0 (branco) a 255 (preto absoluto)
-      const escuridao = 255 - (somaLuminancia / Math.max(1, totalPixels));
-      medicoes.push({ letra, escuridao, pt });
+      const escuridaoAnel = 255 - (somaLuminancia / Math.max(1, totalPixelsAnel));
+      medicoes.push({ letra, escuridao: escuridaoAnel, pt });
 
+      // Desenha os dois círculos do anel em vermelho no diagnóstico
       debugCtx.strokeStyle = "red";
-      debugCtx.lineWidth = 3;
+      debugCtx.lineWidth = 2;
       debugCtx.beginPath();
-      debugCtx.arc(pt.x, pt.y, raioAmostra + 2, 0, Math.PI * 2);
+      debugCtx.arc(pt.x, pt.y, raioExterno, 0, Math.PI * 2);
+      debugCtx.stroke();
+      debugCtx.beginPath();
+      debugCtx.arc(pt.x, pt.y, raioInterno, 0, Math.PI * 2);
       debugCtx.stroke();
     }
 
-    // Ordena da alternativa mais escura (mais pintada) para a mais clara
+    // Compara as 5 alternativas entre si
     medicoes.sort((a, b) => b.escuridao - a.escuridao);
-    const maisEscura = medicoes;
-    const segunda = medicoes;
-    const mediaOutras = (medicoes.escuridao + medicoes.escuridao + medicoes.escuridao + medicoes.escuridao) / 4;
+    const maisEscura = medicoes[0];
+    const segunda = medicoes[1];
+    const mediaVazias = (medicoes[1].escuridao + medicoes[2].escuridao + medicoes[3].escuridao + medicoes[4].escuridao) / 4;
 
     let marcada = "-";
-    // Considera marcada se for significativamente mais escura (+25 níveis) que a média das não marcadas
-    if (maisEscura.escuridao - mediaOutras > 25 && (maisEscura.escuridao - segunda.escuridao) > 15) {
+    if (maisEscura.escuridao - mediaVazias > 22 && (maisEscura.escuridao - segunda.escuridao) > 14) {
       marcada = maisEscura.letra;
       debugCtx.strokeStyle = "#00e676";
       debugCtx.lineWidth = 5;
       debugCtx.beginPath();
-      debugCtx.arc(maisEscura.pt.x, maisEscura.pt.y, raioAmostra + 6, 0, Math.PI * 2);
+      debugCtx.arc(maisEscura.pt.x, maisEscura.pt.y, raioExterno + 4, 0, Math.PI * 2);
       debugCtx.stroke();
-    } else if (maisEscura.escuridao - mediaOutras > 25 && (segunda.escuridao - mediaOutras) > 25) {
+    } else if (maisEscura.escuridao - mediaVazias > 22 && (segunda.escuridao - mediaVazias) > 22) {
       marcada = "DUPLA";
     }
 
     const acertou = marcada === gabarito[q.numero];
-    if (acertou) notaTotal += q.peso;
+    if (acertou) {
+      acertos++;
+      notaTotal += q.peso;
+    }
 
     respostasLidas.push(`${q.numero}:${marcada}${acertou ? "✓" : "✗"}`);
   });
@@ -442,7 +447,7 @@ function detectarELerCartao(imageData, qrCode) {
     idProva,
     gabaritoTexto: Object.entries(gabarito).map(([k, v]) => `${k}:${v}`).join(" "),
     respostasTexto: respostasLidas.join(" | "),
-    nota: notaTotal,
+    acertos,
     notaFormatada: notaTotal.toFixed(1).replace(".", ",")
   };
 }
@@ -455,15 +460,16 @@ function registrarResultado(item) {
     <td><strong>${item.idProva}</strong></td>
     <td>${item.gabaritoTexto}</td>
     <td>${item.respostasTexto}</td>
-    <td style="color:#00e676;font-size:14px;"><strong>${item.notaFormatada} / ${PONTUACAO_MAXIMA.toFixed(1).replace(".", ",")}</strong></td>
+    <td>${item.acertos}/${COORDENADAS_QUESTOES.length}</td>
+    <td style="color:#00e676;font-size:14px;"><strong>${item.notaFormatada}</strong></td>
   `;
   tbody.prepend(tr);
 }
 
 function baixarCSV() {
-  let csv = "ID_Prova;Gabarito;Respostas_Lidas;Nota\n";
+  let csv = "ID_Prova;Gabarito;Respostas_Lidas;Acertos;Nota_Max_3\n";
   resultados.forEach(r => {
-    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.notaFormatada}\n`;
+    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos};${r.notaFormatada}\n`;
   });
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
