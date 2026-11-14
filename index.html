@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leitor Óptico - Validação LaTeX</title>
+  <script src="https://jsdelivr.net"></script>
+  <script async src="https://opencv.org" onload="onOpenCvReady();"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; text-align: center; background: #121212; color: #f5f5f5; margin: 0; padding: 12px; }
+    .container { max-width: 540px; margin: 0 auto; }
+    canvas { width: 100%; border-radius: 10px; border: 2px solid #333; background: #000; }
+    #status { padding: 12px; margin: 8px 0; border-radius: 8px; background: #1e1e1e; font-weight: bold; color: #00e676; font-size: 15px; }
+    .controles { display: flex; gap: 8px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
+    button { background: #2979ff; color: white; border: none; padding: 12px 18px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; }
+    button.secundario { background: #424242; }
+    table { width: 100%; margin-top: 12px; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
+    th, td { border: 1px solid #333; padding: 10px 6px; font-size: 13px; }
+    th { background: #262626; color: #bbb; }
+    .preview-box { margin-top: 12px; }
+    .preview-box span { display: block; font-size: 12px; color: #888; margin-bottom: 4px; }
+    #canvasDebug { max-width: 320px; border: 1px solid #444; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h3>Leitor Óptico (Cartão LaTeX)</h3>
+  <div id="status">Carregando motor de visão computacional...</div>
+
+  <video id="video" playsinline style="display:none;"></video>
+  <canvas id="canvasOutput"></canvas>
+
+  <div class="controles">
+    <button onclick="baixarCSV()">Baixar Planilha (CSV)</button>
+    <button class="secundario" onclick="permitirReleitura()">Ler Próxima / Relê Atual</button>
+  </div>
+
+  <table id="tabelaResultados">
+    <thead>
+      <tr>
+        <th>ID Prova (QR)</th>
+        <th>Gabarito QR</th>
+        <th>Lido (Q5 / Q6)</th>
+        <th>Acertos</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <!-- Miniatura de diagnóstico mostrando o cartão retificado e os pontos de leitura -->
+  <div class="preview-box">
+    <span>Diagnóstico da última leitura (bolinhas verificadas):</span>
+    <canvas id="canvasDebug"></canvas>
+  </div>
+</div>
+
+<script>
+// =========================================================================
+// COORDENADAS CALCULADAS EXATAMENTE A PARTIR DO SEU CÓDIGO TIKZ
+// Retângulo âncora: X de -0.15 a 12.65 (W=12.80) | Y de -0.35 a 5.85 (H=6.20)
+// =========================================================================
+const COORDENADAS_QUESTOES = [
+  {
+    numero: "Q5",
+    y: 0.5242, // (5.85 - 2.6) / 6.20
+    opcoes: {
+      A: 0.3242, // (4.0 - (-0.15)) / 12.80
+      B: 0.4414, // (5.5 - (-0.15)) / 12.80
+      C: 0.5586, // (7.0 - (-0.15)) / 12.80
+      D: 0.6758, // (8.5 - (-0.15)) / 12.80
+      E: 0.7930  // (10.0 - (-0.15)) / 12.80
+    }
+  },
+  {
+    numero: "Q6",
+    y: 0.6855, // (5.85 - 1.6) / 6.20
+    opcoes: {
+      A: 0.3242,
+      B: 0.4414,
+      C: 0.5586,
+      D: 0.6758,
+      E: 0.7930
+    }
+  }
+];
+
+// Proporção exata do retângulo retificado (12.80 x 6.20 -> 1280 x 620 px)
+const WARP_W = 1280;
+const WARP_H = 620;
+const RAIO_PX = 25; // Corresponde exatamente ao raio 0.25cm na escala 100px/cm
+
+let cvPronto = false;
+let ultimoQRBloqueado = "";
+let resultados = [];
+
+function onOpenCvReady() {
+  cvPronto = true;
+  document.getElementById('status').innerText = "Abrindo câmera...";
+  iniciarCamera();
+}
+
+async function iniciarCamera() {
+  const video = document.getElementById('video');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    video.srcObject = stream;
+    video.play();
+    document.getElementById('status').innerText = "Aponte a câmera para o cartão (4 cantos + QR)";
+    requestAnimationFrame(processarFrame);
+  } catch (err) {
+    document.getElementById('status').innerText = "Erro ao acessar câmera. Verifique permissões HTTPS.";
+  }
+}
+
+function permitirReleitura() {
+  ultimoQRBloqueado = "";
+  document.getElementById('status').innerText = "Pronto! Aponte para o cartão.";
+}
+
+// Extrai o gabarito dinâmico de strings como "ID-PROVA:MAT-CALC-V2;GAB:Q5C-Q6A"
+function extrairDadosQR(textoQR) {
+  let idProva = textoQR;
+  let gabarito = { Q5: "C", Q6: "A" }; // Fallback padrão
+
+  const partes = textoQR.split(";");
+  partes.forEach(p => {
+    if (p.startsWith("ID-PROVA:")) idProva = p.replace("ID-PROVA:", "").trim();
+    if (p.startsWith("GAB:")) {
+      const chaves = p.replace("GAB:", "").split("-");
+      chaves.forEach(item => {
+        const match = item.match(/^(Q\d+)([A-E])$/i);
+        if (match) gabarito[match[1].toUpperCase()] = match[2].toUpperCase();
+      });
+    }
+  });
+  return { idProva, gabarito };
+}
+
+function processarFrame() {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvasOutput');
+  const ctx = canvas.getContext('2d');
+
+  if (video.readyState === video.HAVE_ENOUGH_DATA && cvPronto) {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const qrCode = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+
+    if (qrCode) {
+      // Desenha contorno azul ao redor do QR Code detectado
+      ctx.strokeStyle = "#00b0ff";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(qrCode.location.topLeftCorner.x, qrCode.location.topLeftCorner.y);
+      ctx.lineTo(qrCode.location.topRightCorner.x, qrCode.location.topRightCorner.y);
+      ctx.lineTo(qrCode.location.bottomRightCorner.x, qrCode.location.bottomRightCorner.y);
+      ctx.lineTo(qrCode.location.bottomLeftCorner.x, qrCode.location.bottomLeftCorner.y);
+      ctx.closePath();
+      ctx.stroke();
+
+      if (qrCode.data !== ultimoQRBloqueado) {
+        const leitura = detectarELerCartao(canvas, ctx, qrCode.data);
+        if (leitura) {
+          ultimoQRBloqueado = qrCode.data;
+          registrarResultado(leitura);
+          if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+          document.getElementById('status').innerText = `Lido: ${leitura.idProva} | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length}`;
+        }
+      }
+    }
+  }
+  requestAnimationFrame(processarFrame);
+}
+
+function detectarELerCartao(canvas, ctx, textoQR) {
+  let src = cv.imread(canvas);
+  let gray = new cv.Mat();
+  let thresh = new cv.Mat();
+
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+  cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 51, 15);
+
+  let contours = new cv.MatVector();
+  let hierarchy = new cv.Mat();
+  cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+  // Área mínima e máxima proporcional à resolução da câmera para os quadrados de 0.7x0.7cm
+  const areaFrame = canvas.width * canvas.height;
+  const minArea = areaFrame * 0.0003;
+  const maxArea = areaFrame * 0.025;
+
+  let candidatos = [];
+  for (let i = 0; i < contours.size(); ++i) {
+    let cnt = contours.get(i);
+    let area = cv.contourArea(cnt);
+
+    if (area > minArea && area < maxArea) {
+      let peri = cv.arcLength(cnt, true);
+      let approx = new cv.Mat();
+      cv.approxPolyDP(cnt, approx, 0.04 * peri, true);
+
+      if (approx.rows === 4 && cv.isContourConvex(approx)) {
+        let rect = cv.boundingRect(approx);
+        let ratio = rect.width / rect.height;
+        // Verifica se é quadrado e se o preenchimento interno é sólido (> 75% preto)
+        let extent = area / (rect.width * rect.height);
+        if (ratio >= 0.75 && ratio <= 1.33 && extent > 0.75) {
+          candidatos.push({
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            area: area,
+            rect: rect
+          });
+        }
+      }
+      approx.delete();
+    }
+    cnt.delete();
+  }
+
+  // Se houver mais de 4 candidatos (ex: algum bloco interno do QR), pega os 4 de área mais semelhante entre si
+  if (candidatos.length > 4) {
+    candidatos.sort((a, b) => b.area - a.area);
+    candidatos = candidatos.slice(0, 4);
+  }
+
+  if (candidatos.length !== 4) {
+    src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    return null;
+  }
+
+  // Desenha os 4 cantos detectados em verde na tela
+  ctx.strokeStyle = "#00e676";
+  ctx.lineWidth = 4;
+  candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.width, c.rect.height));
+
+  // Ordena: [Superior-Esq, Superior-Dir, Inferior-Dir, Inferior-Esq]
+  candidatos.sort((a, b) => a.y - b.y);
+  let topo = candidatos.slice(0, 2).sort((a, b) => a.x - b.x);
+  let base = candidatos.slice(2, 4).sort((a, b) => a.x - b.x);
+  let cantos = [topo[0], topo[1], base[1], base[0]];
+
+  // Validação geométrica básica (evita falsos positivos se os 4 pontos estiverem colineares)
+  let larguraTopo = Math.hypot(cantos[1].x - cantos[0].x, cantos[1].y - cantos[0].y);
+  let alturaEsq = Math.hypot(cantos[3].x - cantos[0].x, cantos[3].y - cantos[0].y);
+  if (larguraTopo < canvas.width * 0.25 || alturaEsq < canvas.height * 0.15) {
+    src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+    return null;
+  }
+
+  // Retifica a perspectiva para 1280 x 620 px
+  let srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+    cantos[0].x, cantos[0].y,
+    cantos[1].x, cantos[1].y,
+    cantos[2].x, cantos[2].y,
+    cantos[3].x, cantos[3].y
+  ]);
+  let dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, WARP_W, 0, WARP_W, WARP_H, 0, WARP_H]);
+  let M = cv.getPerspectiveTransform(srcTri, dstTri);
+  let warpedThresh = new cv.Mat();
+  let warpedColor = new cv.Mat();
+  cv.warpPerspective(thresh, warpedThresh, M, new cv.Size(WARP_W, WARP_H));
+  cv.warpPerspective(src, warpedColor, M, new cv.Size(WARP_W, WARP_H));
+
+  const { idProva, gabarito } = extrairDadosQR(textoQR);
+  let respostasLidas = [];
+  let acertos = 0;
+
+  COORDENADAS_QUESTOES.forEach(q => {
+    let melhor = { letra: "-", pixels: 0 };
+    let segundoMelhor = 0;
+
+    for (const [letra, propX] of Object.entries(q.opcoes)) {
+      let cx = Math.round(propX * WARP_W);
+      let cy = Math.round(q.y * WARP_H);
+
+      // Usa um quadrado interno inscrito no círculo (r * 0.75) para ignorar a borda preta da circunferência
+      let rInterno = Math.round(RAIO_PX * 0.75);
+      let roi = warpedThresh.roi(new cv.Rect(cx - rInterno, cy - rInterno, rInterno * 2, rInterno * 2));
+      let pixelsPretos = cv.countNonZero(roi);
+      roi.delete();
+
+      // Desenha círculo guia na imagem de diagnóstico
+      cv.circle(warpedColor, new cv.Point(cx, cy), RAIO_PX, new cv.Scalar(255, 0, 0, 255), 2);
+
+      if (pixelsPretos > melhor.pixels) {
+        segundoMelhor = melhor.pixels;
+        melhor = { letra: letra, pixels: pixelsPretos, cx, cy };
+      } else if (pixelsPretos > segundoMelhor) {
+        segundoMelhor = pixelsPretos;
+      }
+    }
+
+    // Exige > 48% de preenchimento interno para considerar marcado a caneta (evita falsos positivos da letra impressa)
+    let areaInterna = Math.pow(Math.round(RAIO_PX * 0.75) * 2, 2);
+    let marcada = "-";
+
+    if (melhor.pixels > areaInterna * 0.48 && melhor.pixels > segundoMelhor * 1.35) {
+      marcada = melhor.letra;
+      // Destaca em verde a bolinha detectada como marcada na imagem de diagnóstico
+      cv.circle(warpedColor, new cv.Point(melhor.cx, melhor.cy), RAIO_PX + 4, new cv.Scalar(0, 230, 118, 255), 4);
+    } else if (melhor.pixels > areaInterna * 0.48 && segundoMelhor > areaInterna * 0.48) {
+      marcada = "DUPLA";
+    }
+
+    respostasLidas.push(`${q.numero}:${marcada}`);
+    if (marcada === gabarito[q.numero]) acertos++;
+  });
+
+  // Exibe a imagem retificada no canvas de diagnóstico abaixo da tabela
+  cv.imshow('canvasDebug', warpedColor);
+
+  src.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete();
+  srcTri.delete(); dstTri.delete(); M.delete(); warpedThresh.delete(); warpedColor.delete();
+
+  return {
+    idProva,
+    gabaritoTexto: Object.entries(gabarito).map(([k, v]) => `${k}:${v}`).join(" "),
+    respostasTexto: respostasLidas.join(" | "),
+    acertos
+  };
+}
+
+function registrarResultado(item) {
+  resultados.push(item);
+  const tbody = document.querySelector("#tabelaResultados tbody");
+  const tr = document.createElement("tr");
+  tr.innerHTML = `
+    <td><strong>${item.idProva}</strong></td>
+    <td>${item.gabaritoTexto}</td>
+    <td>${item.respostasTexto}</td>
+    <td><strong>${item.acertos}/${COORDENADAS_QUESTOES.length}</strong></td>
+  `;
+  tbody.prepend(tr);
+}
+
+function baixarCSV() {
+  let csv = "ID_Prova;Gabarito_QR;Respostas_Lidas;Acertos\n";
+  resultados.forEach(r => {
+    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos}\n`;
+  });
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "validacao_optica.csv";
+  link.click();
+}
+</script>
+</body>
+</html>
+
