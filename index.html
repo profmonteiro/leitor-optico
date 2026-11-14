@@ -12,6 +12,7 @@
     .controles { display: flex; gap: 8px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
     button { background: #2979ff; color: white; border: none; padding: 12px 18px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; }
     button.secundario { background: #424242; }
+    button.verde { background: #00c853; color: #000; }
     table { width: 100%; margin-top: 12px; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
     th, td { border: 1px solid #333; padding: 10px 6px; font-size: 13px; }
     th { background: #262626; color: #bbb; }
@@ -23,12 +24,13 @@
 <body>
 <div class="container">
   <h3>Leitor Óptico (Cartão LaTeX)</h3>
-  <div id="status">Abrindo câmera...</div>
+  <div id="status">Iniciando câmera...</div>
 
-  <video id="video" playsinline style="display:none;"></video>
+  <video id="video" playsinline muted autoplay style="display:none;"></video>
   <canvas id="canvasOutput"></canvas>
 
   <div class="controles">
+    <button class="verde" onclick="iniciarCamera()">Ligar Câmera</button>
     <button onclick="baixarCSV()">Baixar Planilha (CSV)</button>
     <button class="secundario" onclick="permitirReleitura()">Ler Próxima / Relê Atual</button>
   </div>
@@ -53,29 +55,48 @@
 
 <script>
 let cvPronto = false;
+let qrPronto = false;
 let ultimoQRBloqueado = "";
 let resultados = [];
 
 function carregarBibliotecas() {
-  iniciarCamera(); // Abre a câmera imediatamente sem esperar o download
+  iniciarCamera();
 
+  // 1. Carrega leitor de QR Code (leve e instantâneo)
   const s1 = document.createElement('script');
   s1.src = 'https://jsdelivr.net' + '/npm/jsqr@1.4.0/dist/jsQR.min.js';
+  s1.onload = () => { qrPronto = true; atualizarStatus(); };
+  s1.onerror = () => { document.getElementById('status').innerText = "Erro ao baixar leitor QR."; };
   document.head.appendChild(s1);
 
+  // 2. Carrega OpenCV via servidor rápido (jsDelivr)
   const s2 = document.createElement('script');
-  s2.src = 'https://opencv.org' + '/4.8.0/opencv.js';
+  s2.src = 'https://jsdelivr.net' + '/npm/@techstark/opencv-js@4.9.0-release.1/dist/opencv.js';
   s2.async = true;
+  s2.onerror = () => { document.getElementById('status').innerText = "Erro ao baixar OpenCV. Recarregue a página."; };
   document.head.appendChild(s2);
 
-  // Verifica continuamente até que cv.Mat esteja 100% operacional na memória
-  const checarMotor = setInterval(() => {
-    if (typeof cv !== 'undefined' && typeof cv.Mat === 'function' && typeof jsQR !== 'undefined') {
-      cvPronto = true;
-      document.getElementById('status').innerText = "Aponte a câmera para o cartão (4 cantos + QR)";
-      clearInterval(checarMotor);
+  const checarMotor = setInterval(async () => {
+    if (typeof cv !== 'undefined') {
+      if (cv instanceof Promise) {
+        window.cv = await cv;
+      }
+      if (typeof cv.Mat === 'function') {
+        cvPronto = true;
+        atualizarStatus();
+        clearInterval(checarMotor);
+      }
     }
-  }, 500);
+  }, 400);
+}
+
+function atualizarStatus() {
+  const el = document.getElementById('status');
+  if (qrPronto && cvPronto) {
+    el.innerText = "Pronto! Aponte para o cartão (4 cantos + QR)";
+  } else if (qrPronto) {
+    el.innerText = "Leitor QR pronto! Baixando OpenCV...";
+  }
 }
 
 const COORDENADAS_QUESTOES = [
@@ -94,8 +115,8 @@ async function iniciarCamera() {
       video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } }
     });
     video.srcObject = stream;
-    video.play();
-    document.getElementById('status').innerText = "Câmera ativa! Finalizando motor óptico...";
+    await video.play();
+    atualizarStatus();
     requestAnimationFrame(processarFrame);
   } catch (err) {
     document.getElementById('status').innerText = "Erro na câmera: " + err.message;
