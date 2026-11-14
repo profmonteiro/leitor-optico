@@ -3,88 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#121212">
   <title>Leitor Óptico - Pontuação</title>
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, sans-serif;
-      text-align: center;
-      background: #121212;
-      color: #f5f5f5;
-      margin: 0;
-      padding: 12px;
-    }
-    .container { max-width: 650px; margin: 0 auto; }
+    body { font-family: system-ui, sans-serif; text-align: center; background: #121212; color: #f5f5f5; margin: 0; padding: 12px; }
+    .container { max-width: 600px; margin: 0 auto; }
     h3 { margin: 6px 0 10px; }
-    #status {
-      padding: 14px;
-      margin: 8px 0;
-      border-radius: 8px;
-      background: #1e1e1e;
-      color: #ffd54f;
-      font-weight: 700;
-      font-size: 16px;
-      line-height: 1.4;
-    }
+    #status { padding: 14px; margin: 8px 0; border-radius: 8px; background: #1e1e1e; color: #ffd54f; font-weight: bold; font-size: 16px; }
     #status.ok { color: #00e676; border: 2px solid #00e676; font-size: 19px; }
     #status.erro { color: #ff5252; }
-    #video { display: none; }
-    canvas {
-      display: block;
-      width: 100%;
-      height: auto;
-      border-radius: 10px;
-      border: 2px solid #333;
-      background: #000;
-    }
-    .controles {
-      display: flex;
-      gap: 8px;
-      justify-content: center;
-      margin: 10px 0;
-      flex-wrap: wrap;
-    }
-    button {
-      background: #2979ff;
-      color: white;
-      border: none;
-      padding: 12px 16px;
-      font-size: 14px;
-      font-weight: bold;
-      border-radius: 6px;
-      cursor: pointer;
-    }
+    video { display: none; }
+    canvas { display: block; width: 100%; border-radius: 10px; border: 2px solid #333; background: #000; }
+    .controles { display: flex; gap: 8px; justify-content: center; margin: 10px 0; flex-wrap: wrap; }
+    button { background: #2979ff; color: white; border: none; padding: 12px 16px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; }
     button.secundario { background: #424242; }
-    table {
-      width: 100%;
-      margin-top: 12px;
-      border-collapse: collapse;
-      background: #1e1e1e;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    th, td {
-      border: 1px solid #333;
-      padding: 9px 5px;
-      font-size: 12px;
-      overflow-wrap: anywhere;
-    }
+    table { width: 100%; margin-top: 12px; border-collapse: collapse; background: #1e1e1e; border-radius: 8px; overflow: hidden; }
+    th, td { border: 1px solid #333; padding: 9px 5px; font-size: 12px; }
     th { background: #262626; color: #bbb; }
     .preview-box { margin-top: 12px; }
-    .preview-box span {
-      display: block;
-      font-size: 12px;
-      color: #aaa;
-      margin-bottom: 4px;
-    }
+    .preview-box span { display: block; font-size: 12px; color: #aaa; margin-bottom: 4px; }
     #canvasDebug { max-width: 340px; margin: 0 auto; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h3>Leitor Óptico (v2 - Anel + Nota)</h3>
-  <div id="status">Carregando leitor...</div>
+  <h3>Leitor Óptico (v3 - Leve e Preciso)</h3>
+  <div id="status">Iniciando câmera...</div>
 
   <video id="video" playsinline muted autoplay></video>
   <canvas id="canvasOutput"></canvas>
@@ -100,7 +44,7 @@
       <tr>
         <th>ID Prova</th>
         <th>Gabarito</th>
-        <th>Respostas Lidas</th>
+        <th>Lido</th>
         <th>Acertos</th>
         <th>Nota (Max 3,0)</th>
       </tr>
@@ -109,7 +53,7 @@
   </table>
 
   <div class="preview-box">
-    <span>Diagnóstico (verifique se SE/SD/ID/IE e os anéis batem):</span>
+    <span>Diagnóstico (verifique os 4 cantos verdes e os anéis):</span>
     <canvas id="canvasDebug"></canvas>
   </div>
 </div>
@@ -117,29 +61,15 @@
 <script>
 "use strict";
 
-// Regra de pontuação ponderada e coordenadas exatas do TikZ
-const COORDENADAS_QUESTOES = [
-  {
-    numero: "Q5",
-    peso: 2.0,
-    y: 0.5242,
-    opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 }
-  },
-  {
-    numero: "Q6",
-    peso: 1.0,
-    y: 0.6855,
-    opcoes: { A: 0.3242, B: 0.4414, C: 0.5586, D: 0.6758, E: 0.7930 }
-  }
+const QUESTOES = [
+  { numero: "Q5", peso: 2.0, y: 0.5242, xA: 0.3242, xB: 0.4414, xC: 0.5586, xD: 0.6758, xE: 0.7930 },
+  { numero: "Q6", peso: 1.0, y: 0.6855, xA: 0.3242, xB: 0.4414, xC: 0.5586, xD: 0.6758, xE: 0.7930 }
 ];
-
-const PONTUACAO_MAXIMA = COORDENADAS_QUESTOES.reduce((soma, q) => soma + q.peso, 0);
-const GABARITO_PADRAO = { Q5: "C", Q6: "A" };
 
 let resultados = [];
 let ultimoQRBloqueado = "";
 let streamCamera = null;
-let cameraIniciada = false;
+let cameraAtiva = false;
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvasOutput");
@@ -147,22 +77,25 @@ const ctx = canvas.getContext("2d", { willReadFrequently: true });
 const debugCanvas = document.getElementById("canvasDebug");
 const debugCtx = debugCanvas.getContext("2d");
 
-function status(mensagem, tipo = "") {
+function setStatus(msg, classe = "") {
   const el = document.getElementById("status");
-  el.textContent = mensagem;
-  el.className = tipo;
+  el.textContent = msg;
+  el.className = classe;
 }
 
-function carregarBibliotecaQR() {
-  const script = document.createElement("script");
-  script.src = "https://jsdelivr.net" + "/npm/jsqr@1.4.0/dist/jsQR.min.js";
-  script.onload = () => iniciarCamera();
-  script.onerror = () => status("Erro de conexão ao carregar leitor QR.", "erro");
-  document.head.appendChild(script);
+function iniciarTudo() {
+  abrirCamera();
+  const s = document.createElement("script");
+  s.src = "https://jsdelivr.net" + "/npm/jsqr@1.4.0/dist/jsQR.js";
+  s.onload = () => {
+    if (cameraAtiva) setStatus("Aponte para o cartão (4 cantos + QR Code)");
+  };
+  s.onerror = () => setStatus("Erro de rede ao carregar leitor QR.", "erro");
+  document.head.appendChild(s);
 }
 
-async function iniciarCamera() {
-  if (cameraIniciada) return;
+async function abrirCamera() {
+  if (cameraAtiva) return;
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -171,108 +104,120 @@ async function iniciarCamera() {
     streamCamera = stream;
     video.srcObject = stream;
     await video.play();
-    cameraIniciada = true;
-    status("Aponte para o cartão (4 cantos + QR Code)");
-    requestAnimationFrame(processarFrame);
+    cameraAtiva = true;
+    setStatus(typeof window.jsQR === "function" ? "Aponte para o cartão (4 cantos + QR Code)" : "Câmera ativa! Carregando leitor QR...");
+    requestAnimationFrame(loopCaptura);
   } catch (err) {
-    status("Erro ao abrir câmera: " + err.message, "erro");
+    setStatus("Erro na câmera: " + err.message, "erro");
   }
 }
 
 function reiniciarCamera() {
   if (streamCamera) streamCamera.getTracks().forEach(t => t.stop());
-  cameraIniciada = false;
-  iniciarCamera();
+  cameraAtiva = false;
+  abrirCamera();
 }
 
 function permitirReleitura() {
   ultimoQRBloqueado = "";
-  status("Pronto! Aponte para a próxima prova.");
+  setStatus("Pronto! Aponte para a próxima prova.");
 }
 
-function extrairDadosQR(textoQR) {
-  let idProva = textoQR;
-  let gabarito = { ...GABARITO_PADRAO };
-  textoQR.split(";").forEach(p => {
-    if (p.startsWith("ID-PROVA:")) idProva = p.replace("ID-PROVA:", "").trim();
-    if (p.startsWith("GAB:")) {
-      p.replace("GAB:", "").split("-").forEach(item => {
-        const m = item.match(/^(Q\d+)([A-E])$/i);
-        if (m) gabarito[m[1].toUpperCase()] = m[2].toUpperCase();
-      });
+function extrairDadosQR(texto) {
+  let idProva = texto;
+  let gabQ5 = "C";
+  let gabQ6 = "A";
+
+  const partes = texto.split(";");
+  for (let i = 0; i < partes.length; i++) {
+    const p = partes.at(i);
+    if (!p) continue;
+    if (p.startsWith("ID-PROVA:")) {
+      idProva = p.replace("ID-PROVA:", "").trim();
+    } else if (p.startsWith("GAB:")) {
+      const itens = p.replace("GAB:", "").split("-");
+      for (let j = 0; j < itens.length; j++) {
+        const it = itens.at(j).toUpperCase();
+        if (it.startsWith("Q5") && it.length === 3) gabQ5 = it.charAt(2);
+        if (it.startsWith("Q6") && it.length === 3) gabQ6 = it.charAt(2);
+      }
     }
-  });
-  return { idProva, gabarito };
+  }
+  return { idProva, gabQ5, gabQ6 };
 }
-function processarFrame() {
-  if (video.readyState === video.HAVE_ENOUGH_DATA && typeof window.jsQR === "function") {
+
+function loopCaptura() {
+  if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const qrCode = window.jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+    if (typeof window.jsQR === "function") {
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const qr = window.jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: "dontInvert" });
 
-    if (qrCode) {
-      ctx.strokeStyle = "#00b0ff";
-      ctx.lineWidth = 4;
-      ctx.beginPath();
-      ctx.moveTo(qrCode.location.topLeftCorner.x, qrCode.location.topLeftCorner.y);
-      ctx.lineTo(qrCode.location.topRightCorner.x, qrCode.location.topRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomRightCorner.x, qrCode.location.bottomRightCorner.y);
-      ctx.lineTo(qrCode.location.bottomLeftCorner.x, qrCode.location.bottomLeftCorner.y);
-      ctx.closePath();
-      ctx.stroke();
+      if (qr) {
+        ctx.strokeStyle = "#00b0ff";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(qr.location.topLeftCorner.x, qr.location.topLeftCorner.y);
+        ctx.lineTo(qr.location.topRightCorner.x, qr.location.topRightCorner.y);
+        ctx.lineTo(qr.location.bottomRightCorner.x, qr.location.bottomRightCorner.y);
+        ctx.lineTo(qr.location.bottomLeftCorner.x, qr.location.bottomLeftCorner.y);
+        ctx.closePath();
+        ctx.stroke();
 
-      if (qrCode.data !== ultimoQRBloqueado) {
-        const leitura = detectarELerCartao(imageData, qrCode);
-        if (leitura) {
-          ultimoQRBloqueado = qrCode.data;
-          registrarResultado(leitura);
-          if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
-          status(
-            `NOTA: ${leitura.notaFormatada} / ${PONTUACAO_MAXIMA.toFixed(1).replace(".", ",")} pts | Acertos: ${leitura.acertos}/${COORDENADAS_QUESTOES.length} (${leitura.respostasTexto})`,
-            "ok"
-          );
+        if (qr.data !== ultimoQRBloqueado) {
+          const resultado = processarCartao(imgData, qr);
+          if (resultado) {
+            ultimoQRBloqueado = qr.data;
+            adicionarLinhaTabela(resultado);
+            if (navigator.vibrate) navigator.vibrate(200);
+            setStatus(
+              `NOTA: ${resultado.notaTexto} / 3,0 pts | Acertos: ${resultado.acertos}/2 (${resultado.respostasTexto})`,
+              "ok"
+            );
+          }
         }
       }
     }
   }
-  requestAnimationFrame(processarFrame);
+  requestAnimationFrame(loopCaptura);
 }
-
-function detectarELerCartao(imageData, qrCode) {
-  const W = imageData.width;
-  const H = imageData.height;
-  const data = imageData.data;
+function processarCartao(imgData, qr) {
+  const W = imgData.width;
+  const H = imgData.height;
+  const data = imgData.data;
 
   const gray = new Uint8Array(W * H);
   let soma = 0;
-  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
-    const lum = (data[i] * 77 + data[i + 1] * 150 + data[i + 2] * 29) >> 8;
-    gray[j] = lum;
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const lum = (data.at(i) * 77 + data.at(i + 1) * 150 + data.at(i + 2) * 29) >> 8;
+    gray[p] = lum;
     soma += lum;
   }
   const limiar = (soma / (W * H)) * 0.65;
 
-  const visitado = new Uint8Array(W * H);
-  const qrCx = (qrCode.location.topLeftCorner.x + qrCode.location.bottomRightCorner.x) / 2;
-  const qrCy = (qrCode.location.topLeftCorner.y + qrCode.location.bottomRightCorner.y) / 2;
+  const qrCx = (qr.location.topLeftCorner.x + qr.location.bottomRightCorner.x) / 2;
+  const qrCy = (qr.location.topLeftCorner.y + qr.location.bottomRightCorner.y) / 2;
   const qrTam = Math.hypot(
-    qrCode.location.topRightCorner.x - qrCode.location.topLeftCorner.x,
-    qrCode.location.topRightCorner.y - qrCode.location.topLeftCorner.y
+    qr.location.topRightCorner.x - qr.location.topLeftCorner.x,
+    qr.location.topRightCorner.y - qr.location.topLeftCorner.y
   );
 
-  const minPixels = (W * H) * 0.00018;
-  const maxPixels = (W * H) * 0.022;
-  let candidatos = [];
-  const stackX = new Int32Array(maxPixels + 200);
-  const stackY = new Int32Array(maxPixels + 200);
+  const raioMaximoBusca = qrTam * 9.5;
+  const minArea = Math.max(40, Math.round(qrTam * qrTam * 0.04));
+  const maxArea = Math.round(qrTam * qrTam * 0.65);
 
-  for (let y = 6; y < H - 6; y++) {
-    for (let x = 6; x < W - 6; x++) {
+  const visitado = new Uint8Array(W * H);
+  const stackX = new Int32Array(maxArea + 500);
+  const stackY = new Int32Array(maxArea + 500);
+  let candidatos = [];
+
+  for (let y = 6; y < H - 6; y += 2) {
+    for (let x = 6; x < W - 6; x += 2) {
       const idx = y * W + x;
-      if (gray[idx] < limiar && !visitado[idx]) {
+      if (gray[idx] < limiar && visitado[idx] === 0) {
         let top = 0;
         stackX[top] = x;
         stackY[top] = y;
@@ -289,32 +234,44 @@ function detectarELerCartao(imageData, qrCode) {
           if (cx > maxX) maxX = cx;
           if (cy < minY) minY = cy;
           if (cy > maxY) maxY = cy;
-          if (count > maxPixels) break;
+          if (count > maxArea) break;
 
-          const viz = [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]];
-          for (let k = 0; k < 4; k++) {
-            const nx = viz[k][0], ny = viz[k][1];
-            if (nx > 0 && nx < W && ny > 0 && ny < H) {
-              const nIdx = ny * W + nx;
-              if (!visitado[nIdx] && gray[nIdx] < limiar) {
-                visitado[nIdx] = 1;
-                top++;
-                stackX[top] = nx;
-                stackY[top] = ny;
-              }
+          if (cx + 1 < W) {
+            const n1 = cy * W + (cx + 1);
+            if (visitado[n1] === 0 && gray[n1] < limiar) {
+              visitado[n1] = 1; top++; stackX[top] = cx + 1; stackY[top] = cy;
+            }
+          }
+          if (cx - 1 >= 0) {
+            const n2 = cy * W + (cx - 1);
+            if (visitado[n2] === 0 && gray[n2] < limiar) {
+              visitado[n2] = 1; top++; stackX[top] = cx - 1; stackY[top] = cy;
+            }
+          }
+          if (cy + 1 < H) {
+            const n3 = (cy + 1) * W + cx;
+            if (visitado[n3] === 0 && gray[n3] < limiar) {
+              visitado[n3] = 1; top++; stackX[top] = cx; stackY[top] = cy + 1;
+            }
+          }
+          if (cy - 1 >= 0) {
+            const n4 = (cy - 1) * W + cx;
+            if (visitado[n4] === 0 && gray[n4] < limiar) {
+              visitado[n4] = 1; top++; stackX[top] = cx; stackY[top] = cy - 1;
             }
           }
         }
 
-        if (count >= minPixels && count <= maxPixels) {
+        if (count >= minArea && count <= maxArea) {
           const bw = maxX - minX + 1;
           const bh = maxY - minY + 1;
           const ratio = bw / bh;
           const centX = (minX + maxX) / 2;
           const centY = (minY + maxY) / 2;
+          const distQR = Math.hypot(centX - qrCx, centY - qrCy);
 
-          if (Math.hypot(centX - qrCx, centY - qrCy) > qrTam * 0.70 && ratio >= 0.65 && ratio <= 1.50) {
-            candidatos.push({ x: centX, y: centY, area: count, rect: { x: minX, y: minY, w: bw, h: bh } });
+          if (distQR > qrTam * 0.70 && distQR < raioMaximoBusca && ratio >= 0.65 && ratio <= 1.50) {
+            candidatos.push({ x: centX, y: centY, area: count, minX, minY, bw, bh });
           }
         }
       }
@@ -329,9 +286,8 @@ function detectarELerCartao(imageData, qrCode) {
 
   ctx.strokeStyle = "#00e676";
   ctx.lineWidth = 5;
-  candidatos.forEach(c => ctx.strokeRect(c.rect.x, c.rect.y, c.rect.w, c.rect.h));
+  candidatos.forEach(c => ctx.strokeRect(c.minX, c.minY, c.bw, c.bh));
 
-  // Ordena os 4 cantos em sentido horário na tela
   const mX = candidatos.reduce((s, c) => s + c.x, 0) / 4;
   const mY = candidatos.reduce((s, c) => s + c.y, 0) / 4;
   candidatos.sort((a, b) => Math.atan2(a.y - mY, a.x - mX) - Math.atan2(b.y - mY, b.x - mX));
@@ -342,10 +298,10 @@ function detectarELerCartao(imageData, qrCode) {
     if (d < menorD) { menorD = d; idxQR = idx; }
   });
 
-  const supDir = candidatos[idxQR];
-  const infDir = candidatos[(idxQR + 1) % 4];
-  const infEsq = candidatos[(idxQR + 2) % 4];
-  const supEsq = candidatos[(idxQR + 3) % 4];
+  const supDir = candidatos.at(idxQR);
+  const infDir = candidatos.at((idxQR + 1) % 4);
+  const infEsq = candidatos.at((idxQR + 2) % 4);
+  const supEsq = candidatos.at((idxQR + 3) % 4);
 
   function mapearPonto(u, v) {
     const topX = supEsq.x + (supDir.x - supEsq.x) * u;
@@ -360,7 +316,7 @@ function detectarELerCartao(imageData, qrCode) {
 
   debugCanvas.width = W;
   debugCanvas.height = H;
-  debugCtx.putImageData(imageData, 0, 0);
+  debugCtx.putImageData(imgData, 0, 0);
 
   debugCtx.fillStyle = "#00e676";
   debugCtx.font = "bold 22px sans-serif";
@@ -369,43 +325,47 @@ function detectarELerCartao(imageData, qrCode) {
   debugCtx.fillText("ID", infDir.x, infDir.y);
   debugCtx.fillText("IE", infEsq.x, infEsq.y);
 
-  // Raio externo proporcional à bolinha de 0.25cm (0.25 / 12.80 = 0.0195 da largura do cartão)
   const larguraCartaoPx = Math.hypot(supDir.x - supEsq.x, supDir.y - supEsq.y);
   const raioExterno = Math.max(8, Math.round(larguraCartaoPx * 0.017));
-  const raioInterno = Math.max(3, Math.round(raioExterno * 0.42)); // Ignora o miolo da letra impressa!
+  const raioInterno = Math.max(3, Math.round(raioExterno * 0.42));
 
-  const { idProva, gabarito } = extrairDadosQR(qrCode.data);
+  const dadosQR = extrairDadosQR(qr.data);
   let respostasLidas = [];
   let acertos = 0;
   let notaTotal = 0;
 
-  COORDENADAS_QUESTOES.forEach(q => {
+  QUESTOES.forEach(q => {
+    const listaOpcoes = [
+      { letra: "A", propX: q.xA },
+      { letra: "B", propX: q.xB },
+      { letra: "C", propX: q.xC },
+      { letra: "D", propX: q.xD },
+      { letra: "E", propX: q.xE }
+    ];
+
     let medicoes = [];
+    listaOpcoes.forEach(op => {
+      const pt = mapearPonto(op.propX, q.y);
+      let somaLum = 0;
+      let totalPx = 0;
 
-    for (const [letra, propX] of Object.entries(q.opcoes)) {
-      const pt = mapearPonto(propX, q.y);
-      let somaLuminancia = 0;
-      let totalPixelsAnel = 0;
-
-      // Amostragem em ANEL CIRCULAR: evita a letra no centro e a borda preta externa
       for (let dy = -raioExterno; dy <= raioExterno; dy++) {
         for (let dx = -raioExterno; dx <= raioExterno; dx++) {
-          const dist2 = dx * dx + dy * dy;
-          if (dist2 >= raioInterno * raioInterno && dist2 <= raioExterno * raioExterno) {
+          const d2 = dx * dx + dy * dy;
+          if (d2 >= raioInterno * raioInterno && d2 <= raioExterno * raioExterno) {
             const px = pt.x + dx;
             const py = pt.y + dy;
             if (px >= 0 && px < W && py >= 0 && py < H) {
-              somaLuminancia += gray[py * W + px];
-              totalPixelsAnel++;
+              somaLum += gray[py * W + px];
+              totalPx++;
             }
           }
         }
       }
 
-      const escuridaoAnel = 255 - (somaLuminancia / Math.max(1, totalPixelsAnel));
-      medicoes.push({ letra, escuridao: escuridaoAnel, pt });
+      const escuridao = 255 - (somaLum / Math.max(1, totalPx));
+      medicoes.push({ letra: op.letra, escuridao, pt });
 
-      // Desenha os dois círculos do anel em vermelho no diagnóstico
       debugCtx.strokeStyle = "red";
       debugCtx.lineWidth = 2;
       debugCtx.beginPath();
@@ -414,27 +374,27 @@ function detectarELerCartao(imageData, qrCode) {
       debugCtx.beginPath();
       debugCtx.arc(pt.x, pt.y, raioInterno, 0, Math.PI * 2);
       debugCtx.stroke();
-    }
+    });
 
-    // Compara as 5 alternativas entre si
     medicoes.sort((a, b) => b.escuridao - a.escuridao);
-    const maisEscura = medicoes[0];
-    const segunda = medicoes[1];
-    const mediaVazias = (medicoes[1].escuridao + medicoes[2].escuridao + medicoes[3].escuridao + medicoes[4].escuridao) / 4;
+    const maisEscura = medicoes.at(0);
+    const segunda = medicoes.at(1);
+    const mediaVazias = (medicoes.at(1).escuridao + medicoes.at(2).escuridao + medicoes.at(3).escuridao + medicoes.at(4).escuridao) / 4;
 
     let marcada = "-";
-    if (maisEscura.escuridao - mediaVazias > 22 && (maisEscura.escuridao - segunda.escuridao) > 14) {
+    if (maisEscura.escuridao - mediaVazias > 20 && (maisEscura.escuridao - segunda.escuridao) > 12) {
       marcada = maisEscura.letra;
       debugCtx.strokeStyle = "#00e676";
       debugCtx.lineWidth = 5;
       debugCtx.beginPath();
       debugCtx.arc(maisEscura.pt.x, maisEscura.pt.y, raioExterno + 4, 0, Math.PI * 2);
       debugCtx.stroke();
-    } else if (maisEscura.escuridao - mediaVazias > 22 && (segunda.escuridao - mediaVazias) > 22) {
+    } else if (maisEscura.escuridao - mediaVazias > 20 && (segunda.escuridao - mediaVazias) > 20) {
       marcada = "DUPLA";
     }
 
-    const acertou = marcada === gabarito[q.numero];
+    const gabaritoQuestao = q.numero === "Q5" ? dadosQR.gabQ5 : dadosQR.gabQ6;
+    const acertou = marcada === gabaritoQuestao;
     if (acertou) {
       acertos++;
       notaTotal += q.peso;
@@ -444,15 +404,15 @@ function detectarELerCartao(imageData, qrCode) {
   });
 
   return {
-    idProva,
-    gabaritoTexto: Object.entries(gabarito).map(([k, v]) => `${k}:${v}`).join(" "),
+    idProva: dadosQR.idProva,
+    gabaritoTexto: `Q5:${dadosQR.gabQ5} Q6:${dadosQR.gabQ6}`,
     respostasTexto: respostasLidas.join(" | "),
     acertos,
-    notaFormatada: notaTotal.toFixed(1).replace(".", ",")
+    notaTexto: notaTotal.toFixed(1).replace(".", ",")
   };
 }
 
-function registrarResultado(item) {
+function adicionarLinhaTabela(item) {
   resultados.push(item);
   const tbody = document.querySelector("#tabelaResultados tbody");
   const tr = document.createElement("tr");
@@ -460,8 +420,8 @@ function registrarResultado(item) {
     <td><strong>${item.idProva}</strong></td>
     <td>${item.gabaritoTexto}</td>
     <td>${item.respostasTexto}</td>
-    <td>${item.acertos}/${COORDENADAS_QUESTOES.length}</td>
-    <td style="color:#00e676;font-size:14px;"><strong>${item.notaFormatada}</strong></td>
+    <td>${item.acertos}/2</td>
+    <td style="color:#00e676;font-size:14px;"><strong>${item.notaTexto}</strong></td>
   `;
   tbody.prepend(tr);
 }
@@ -469,7 +429,7 @@ function registrarResultado(item) {
 function baixarCSV() {
   let csv = "ID_Prova;Gabarito;Respostas_Lidas;Acertos;Nota_Max_3\n";
   resultados.forEach(r => {
-    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos};${r.notaFormatada}\n`;
+    csv += `${r.idProva};${r.gabaritoTexto};${r.respostasTexto};${r.acertos};${r.notaTexto}\n`;
   });
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const link = document.createElement("a");
@@ -478,7 +438,7 @@ function baixarCSV() {
   link.click();
 }
 
-carregarBibliotecaQR();
+iniciarTudo();
 </script>
 </body>
 </html>
