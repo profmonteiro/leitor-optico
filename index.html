@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#121212">
-  <title>Leitor Óptico - PUC-Campinas (4 Questões)</title>
+  <title>Leitor Óptico - Cartão-Resposta</title>
 
   <style>
     * { box-sizing: border-box; }
@@ -19,18 +19,17 @@
     .container { max-width: 650px; margin: 0 auto; }
     h3 { margin: 8px 0 12px; }
     #status {
-      padding: 14px;
+      padding: 12px;
       margin: 8px 0;
       border-radius: 8px;
       background: #1e1e1e;
       color: #ffd54f;
       font-weight: 700;
       font-size: 15px;
-      line-height: 1.5;
-      border: 1px solid #333;
+      line-height: 1.4;
     }
-    #status.ok { color: #00e676; border-color: #00e676; }
-    #status.erro { color: #ff5252; border-color: #ff5252; }
+    #status.ok { color: #00e676; }
+    #status.erro { color: #ff5252; }
     #video { display: none; }
     canvas {
       display: block;
@@ -74,7 +73,6 @@
       overflow-wrap: anywhere;
     }
     th { background: #262626; color: #bbb; }
-    .nota-destaque { font-weight: bold; color: #00e676; font-size: 13px; }
     .preview-box { margin-top: 12px; }
     .preview-box span {
       display: block;
@@ -94,7 +92,7 @@
 
 <body>
 <div class="container">
-  <h3>Leitor Óptico — Avaliação (4 Questões)</h3>
+  <h3>Leitor Óptico — ESTAT-EMP2-EC</h3>
 
   <div id="status">Preparando o leitor...</div>
 
@@ -109,15 +107,19 @@
 
   <p class="nota">
     Posicione o cartão inteiro dentro da imagem, com boa iluminação e sem inclinação excessiva.
-    O QR Code e os quatro marcadores pretos dos cantos precisam estar visíveis.
+    O QR Code e os quatro marcadores pretos precisam estar visíveis.
   </p>
 
   <table id="tabelaResultados">
     <thead>
       <tr>
         <th>ID Prova</th>
-        <th>Pontuação por Questão</th>
-        <th>Acertos</th>
+        <th>Gabarito</th>
+        <th>Respostas lidas</th>
+        <th>Q1 (2,5 pts)</th>
+        <th>Q2 (2,5 pts)</th>
+        <th>Q3 (2,5 pts)</th>
+        <th>Q4 (2,5 pts)</th>
         <th>Nota</th>
       </tr>
     </thead>
@@ -133,22 +135,24 @@
 <script>
 "use strict";
 
-const OPCOES_X = {
-  A: 0.3867,
-  B: 0.5039,
-  C: 0.6211,
-  D: 0.7383,
-  E: 0.8555
-};
+/* ================================================================
+   CONFIGURAÇÃO DO CARTÃO
+   As coordenadas são relativas aos centros dos quatro marcadores.
+   Q1: B | Q2: A | Q3: A | Q4: B
+   ================================================================ */
 
 const COORDENADAS_QUESTOES = [
-  { numero: "Q1", y: 0.3675, valor: 2.5, opcoes: OPCOES_X },
-  { numero: "Q2", y: 0.5120, valor: 2.5, opcoes: OPCOES_X },
-  { numero: "Q3", y: 0.6566, valor: 2.5, opcoes: OPCOES_X },
-  { numero: "Q4", y: 0.8012, valor: 2.5, opcoes: OPCOES_X }
+  { numero: "Q1", y: 0.3674699, pontos: 2.5, opcoes: { A: 0.3867188, B: 0.5039063, C: 0.6210938, D: 0.7382813, E: 0.8554688 } },
+  { numero: "Q2", y: 0.5120482, pontos: 2.5, opcoes: { A: 0.3867188, B: 0.5039063, C: 0.6210938, D: 0.7382813, E: 0.8554688 } },
+  { numero: "Q3", y: 0.6566265, pontos: 2.5, opcoes: { A: 0.3867188, B: 0.5039063, C: 0.6210938, D: 0.7382813, E: 0.8554688 } },
+  { numero: "Q4", y: 0.8012048, pontos: 2.5, opcoes: { A: 0.3867188, B: 0.5039063, C: 0.6210938, D: 0.7382813, E: 0.8554688 } }
 ];
 
 const GABARITO_PADRAO = { Q1: "B", Q2: "A", Q3: "A", Q4: "B" };
+
+const PONTUACAO_MAXIMA = COORDENADAS_QUESTOES.reduce(
+  (soma, questao) => soma + questao.pontos, 0
+);
 
 let resultados = [];
 let ultimoQRBloqueado = "";
@@ -164,17 +168,9 @@ const ctx = canvas.getContext("2d", { willReadFrequently: true });
 const debugCanvas = document.getElementById("canvasDebug");
 const debugCtx = debugCanvas.getContext("2d");
 
-function formatarPts(valor) {
-  return valor.toFixed(1).replace(".", ",");
-}
-
-function status(mensagem, tipo = "", isHTML = false) {
+function status(mensagem, tipo = "") {
   const elemento = document.getElementById("status");
-  if (isHTML) {
-    elemento.innerHTML = mensagem;
-  } else {
-    elemento.textContent = mensagem;
-  }
+  elemento.textContent = mensagem;
   elemento.className = tipo;
 }
 function carregarBibliotecaQR() {
@@ -229,6 +225,7 @@ async function iniciarCamera() {
     }
 
     let stream;
+
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -332,6 +329,7 @@ function extrairDadosQR(textoQR) {
 
   return dados;
 }
+
 function processarFrame() {
   if (!cameraIniciada || video.readyState < video.HAVE_CURRENT_DATA) {
     framePendente = false;
@@ -386,13 +384,13 @@ function processarFrame() {
 
             if (navigator.vibrate) navigator.vibrate(150);
 
-            const notaMax = COORDENADAS_QUESTOES.reduce((s, q) => s + q.valor, 0);
-            const htmlVisor =
-              "<strong>Prova:</strong> " + leitura.idProva +
-              " &nbsp;|&nbsp; <strong>Nota Final: " + formatarPts(leitura.notaTotal) + " / " + formatarPts(notaMax) + " pts</strong><br>" +
-              "<span style='font-size:13px; color:#fff;'>" + leitura.detalhesVisor + "</span>";
-
-            status(htmlVisor, "ok", true);
+            status(
+              "Cartão: " + leitura.idProva +
+              " | " + leitura.detalhamentoTexto +
+              " | Nota: " + leitura.pontuacao.toFixed(1).replace(".", ",") +
+              "/" + PONTUACAO_MAXIMA.toFixed(1).replace(".", ",") + " pontos",
+              "ok"
+            );
           } else {
             status("QR Code encontrado, mas não localizei os quatro marcadores. Ajuste o enquadramento e a iluminação.");
           }
@@ -423,7 +421,6 @@ function desenharContornoQR(qrCode) {
   ctx.closePath();
   ctx.stroke();
 }
-
 function detectarMarcadores(imageData, qrCode) {
   const W = imageData.width;
   const H = imageData.height;
@@ -435,6 +432,7 @@ function detectarMarcadores(imageData, qrCode) {
 
   const pixels = new Uint8Array(total);
   const rgba = imageData.data;
+
   const LIMIAR = 105;
 
   for (let y = 0; y < h; y++) {
@@ -459,7 +457,7 @@ function detectarMarcadores(imageData, qrCode) {
     qr.topRightCorner.y - qr.topLeftCorner.y
   );
 
-  const areaMinima = Math.max(40, total * 0.00022);
+  const areaMinima = Math.max(45, total * 0.00025);
   const areaMaxima = total * 0.025;
 
   for (let inicio = 0; inicio < total; inicio++) {
@@ -488,14 +486,21 @@ function detectarMarcadores(imageData, qrCode) {
 
       if (quantidade > areaMaxima) break;
 
-      const vizinhos = [indice - 1, indice + 1, indice - w, indice + w];
+      const vizinhos = [
+        indice - 1,
+        indice + 1,
+        indice - w,
+        indice + w
+      ];
 
       for (let k = 0; k < 4; k++) {
         const proximo = vizinhos[k];
+
         if (proximo < 0 || proximo >= total) continue;
 
         const px = proximo % w;
         const py = Math.floor(proximo / w);
+
         if (Math.abs(px - x) + Math.abs(py - y) !== 1) continue;
 
         if (pixels[proximo] && !visitado[proximo]) {
@@ -512,13 +517,13 @@ function detectarMarcadores(imageData, qrCode) {
     const proporcao = bw / bh;
     const preenchimento = quantidade / (bw * bh);
 
-    if (proporcao < 0.68 || proporcao > 1.45) continue;
+    if (proporcao < 0.70 || proporcao > 1.43) continue;
     if (preenchimento < 0.48) continue;
 
     const centroX = ((minX + maxX) / 2) * fator;
     const centroY = ((minY + maxY) / 2) * fator;
 
-    if (Math.hypot(centroX - qrCx, centroY - qrCy) < qrTam * 0.52) continue;
+    if (Math.hypot(centroX - qrCx, centroY - qrCy) < qrTam * 0.62) continue;
 
     candidatos.push({
       x: centroX,
@@ -546,8 +551,11 @@ function detectarMarcadores(imageData, qrCode) {
     if (selecionados.length === 4) break;
   }
 
-  return selecionados.length === 4 ? selecionados : null;
+  if (selecionados.length !== 4) return null;
+
+  return selecionados;
 }
+
 function detectarELerCartao(imageData, contexto, qrCode) {
   const W = imageData.width;
   const H = imageData.height;
@@ -613,17 +621,20 @@ function detectarELerCartao(imageData, contexto, qrCode) {
   debugCtx.putImageData(imageData, 0, 0);
 
   const dadosQR = extrairDadosQR(qrCode.data);
-  const detalhes = [];
+  const respostas = [];
+  const desempenho = {};
   let acertos = 0;
-  let notaTotal = 0;
+  let pontuacao = 0;
 
   const larguraCartao = Math.hypot(
     superiorDireito.x - superiorEsquerdo.x,
     superiorDireito.y - superiorEsquerdo.y
   );
 
-  const raio = Math.max(5, Math.round(larguraCartao * 0.014));
-  const limiarEscuro = 115;
+  const raioBolinha = larguraCartao * (0.26 / 12.8);
+  const raioInterno = Math.max(3, raioBolinha * 0.42);
+  const raioExterno = Math.max(5, raioBolinha * 0.78);
+  const limiarEscuro = 145;
 
   for (const questao of COORDENADAS_QUESTOES) {
     const leituras = [];
@@ -638,13 +649,13 @@ function detectarELerCartao(imageData, contexto, qrCode) {
       let escuros = 0;
       let totalPixels = 0;
 
-      for (let dy = -raio; dy <= raio; dy++) {
-        for (let dx = -raio; dx <= raio; dx++) {
-          if (dx * dx + dy * dy > raio * raio) continue;
+      for (let dy = -Math.ceil(raioExterno); dy <= Math.ceil(raioExterno); dy++) {
+        for (let dx = -Math.ceil(raioExterno); dx <= Math.ceil(raioExterno); dx++) {
+          const distancia = Math.hypot(dx, dy);
+          if (distancia < raioInterno || distancia > raioExterno) continue;
 
           const px = Math.round(ponto.x + dx);
           const py = Math.round(ponto.y + dy);
-
           if (px < 0 || px >= W || py < 0 || py >= H) continue;
 
           const indice = (py * W + px) * 4;
@@ -672,45 +683,58 @@ function detectarELerCartao(imageData, contexto, qrCode) {
     const segunda = leituras[1];
     let marcada = "-";
 
-    if (primeira && primeira.percentual > 0.34 &&
-        (!segunda || primeira.percentual > segunda.percentual * 1.25)) {
+    if (primeira && primeira.percentual > 0.30 &&
+        (!segunda || primeira.percentual > segunda.percentual * 1.35)) {
       marcada = primeira.letra;
     } else if (primeira && segunda &&
-               primeira.percentual > 0.34 && segunda.percentual > 0.34) {
+               primeira.percentual > 0.30 && segunda.percentual > 0.30) {
       marcada = "DUPLA";
     }
+
+    const correta = dadosQR.gabarito[questao.numero] || "-";
+    const acertou = marcada === correta;
+    const pontosObtidos = acertou ? questao.pontos : 0;
+
+    if (acertou) acertos++;
+    pontuacao += pontosObtidos;
+
+    desempenho[questao.numero] = {
+      marcada, correta, acertou, pontosObtidos,
+      pontosMaximos: questao.pontos
+    };
 
     for (const leitura of leituras) {
       if (!leitura.ponto) continue;
       debugCtx.beginPath();
-      debugCtx.arc(leitura.ponto.x, leitura.ponto.y, raio + 2, 0, Math.PI * 2);
+      debugCtx.arc(leitura.ponto.x, leitura.ponto.y, raioExterno + 2, 0, Math.PI * 2);
       debugCtx.lineWidth = 2;
       debugCtx.strokeStyle = leitura.letra === marcada ? "#00e676" : "#ff5252";
       debugCtx.stroke();
     }
 
-    const gabaritoQ = dadosQR.gabarito[questao.numero] || "?";
-    const acertou = marcada === gabaritoQ;
-    const pontosQuestao = acertou ? questao.valor : 0;
-
-    if (acertou) {
-      acertos++;
-      notaTotal += questao.valor;
-    }
-
-    detalhes.push(
-      questao.numero + ":" + marcada + " (" + formatarPts(pontosQuestao) + " pts)"
-    );
+    respostas.push(questao.numero + ":" + marcada);
   }
+
+  const detalhamentoTexto = COORDENADAS_QUESTOES.map(q => {
+    const d = desempenho[q.numero];
+    return q.numero + " " + d.marcada + " " +
+      (d.acertou ? "✓" : "✗") + " (" +
+      d.pontosObtidos.toFixed(1).replace(".", ",") + " pts)";
+  }).join(" | ");
 
   return {
     idProva: dadosQR.idProva,
-    detalhesVisor: detalhes.join(" | "),
-    acertos: acertos,
-    notaTotal: notaTotal
+    gabaritoTexto: COORDENADAS_QUESTOES
+      .map(q => q.numero + ":" + (dadosQR.gabarito[q.numero] || "-"))
+      .join(" "),
+    respostasTexto: respostas.join(" | "),
+    desempenho,
+    detalhamentoTexto,
+    acertos,
+    pontuacao,
+    pontuacaoMaxima: PONTUACAO_MAXIMA
   };
 }
-
 function criarHomografia(origem, destino) {
   const A = [];
   const B = [];
@@ -784,15 +808,20 @@ function registrarResultado(item) {
 
   const valores = [
     item.idProva,
-    item.detalhesVisor,
-    item.acertos + "/" + COORDENADAS_QUESTOES.length,
-    formatarPts(item.notaTotal) + " pts"
+    item.gabaritoTexto,
+    item.respostasTexto,
+    ...COORDENADAS_QUESTOES.map(q => {
+      const d = item.desempenho[q.numero];
+      return d.marcada + (d.acertou ? " ✓ " : " ✗ ") +
+        d.pontosObtidos.toFixed(1).replace(".", ",");
+    }),
+    item.pontuacao.toFixed(1).replace(".", ",") + "/" +
+      item.pontuacaoMaxima.toFixed(1).replace(".", ",")
   ];
 
-  valores.forEach((valor, idx) => {
+  valores.forEach(valor => {
     const td = document.createElement("td");
     td.textContent = valor;
-    if (idx === 3) td.className = "nota-destaque";
     tr.appendChild(td);
   });
 
@@ -811,32 +840,55 @@ function escaparCSV(valor) {
 
 function baixarCSV() {
   if (!resultados.length) {
-    status("Nenhum cartão foi lido ainda para exportar.", "erro");
+    status("Ainda não há resultados para exportar.", "erro");
     return;
   }
 
-  const cabecalho = ["ID Prova", "Pontuacao por Questao", "Acertos", "Nota Final"];
+  const cabecalho = [
+    "ID_Prova", "Gabarito_QR", "Respostas_Lidas",
+    ...COORDENADAS_QUESTOES.map(q => q.numero + "_Pontos"),
+    "Acertos", "Pontuacao_Total", "Pontuacao_Maxima"
+  ];
+
   const linhas = [cabecalho.map(escaparCSV).join(";")];
 
-  for (const r of resultados) {
-    linhas.push([
-      r.idProva,
-      r.detalhesVisor,
-      r.acertos + "/" + COORDENADAS_QUESTOES.length,
-      formatarPts(r.notaTotal)
-    ].map(escaparCSV).join(";"));
-  }
+  resultados.forEach(r => {
+    const pontosPorQuestao = COORDENADAS_QUESTOES.map(q =>
+      r.desempenho[q.numero].pontosObtidos.toFixed(1).replace(".", ",")
+    );
 
-  const blob = new Blob(["\uFEFF" + linhas.join("\n")], { type: "text/csv;charset=utf-8;" });
+    linhas.push([
+      escaparCSV(r.idProva),
+      escaparCSV(r.gabaritoTexto),
+      escaparCSV(r.respostasTexto),
+      ...pontosPorQuestao.map(escaparCSV),
+      escaparCSV(r.acertos + "/" + COORDENADAS_QUESTOES.length),
+      escaparCSV(r.pontuacao.toFixed(1).replace(".", ",")),
+      escaparCSV(r.pontuacaoMaxima.toFixed(1).replace(".", ","))
+    ].join(";"));
+  });
+
+  const blob = new Blob(["\uFEFF" + linhas.join("\r\n")], {
+    type: "text/csv;charset=utf-8;"
+  });
+
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "resultados_avaliacao_4q.csv";
+  link.download = "resultados_ESTAT_EMP2_EC.csv";
+  document.body.appendChild(link);
   link.click();
+  link.remove();
   URL.revokeObjectURL(url);
 }
 
 window.addEventListener("load", carregarBibliotecaQR);
+
+window.addEventListener("beforeunload", () => {
+  if (streamCamera) {
+    streamCamera.getTracks().forEach(track => track.stop());
+  }
+});
 </script>
 </body>
 </html>
