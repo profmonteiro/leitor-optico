@@ -49,12 +49,13 @@
       background: #2979ff;
       color: #fff;
       border: none;
-      padding: 11px 15px;
+      padding: 12px 15px;
       font-size: 13px;
       font-weight: 700;
       border-radius: 6px;
       cursor: pointer;
     }
+    button.verde { background: #00c853; color: #000; }
     button.sec { background: #424242; }
     .tabela-wrap { overflow-x: auto; margin-top: 10px; }
     table {
@@ -72,15 +73,15 @@
 <body>
 <div class="container">
   <h3>Leitor Óptico — ESTAT-EMP2-EC</h3>
-  <div id="status">Iniciando câmera...</div>
+  <div id="status">Toque em "Ativar Câmera" se não abrir automaticamente.</div>
 
   <video id="video" playsinline muted autoplay></video>
   <canvas id="canvasOutput"></canvas>
 
   <div class="controles">
+    <button class="verde" onclick="iniciarCamera()">Ativar / Reiniciar Câmera</button>
     <button onclick="baixarCSV()">Baixar CSV</button>
     <button class="sec" onclick="permitirReleitura()">Ler novamente</button>
-    <button class="sec" onclick="iniciarCamera()">Reiniciar câmera</button>
   </div>
 
   <div class="tabela-wrap">
@@ -103,7 +104,6 @@
   <canvas id="canvasDebug"></canvas>
 </div>
 
-<script src="https://jsdelivr.net" async></script>
 <script>
 "use strict";
 
@@ -116,16 +116,19 @@ const QUESTOES = [
 
 const OPCOES_X = { A: 0.3867, B: 0.5039, C: 0.6211, D: 0.7383, E: 0.8555 };
 const GABARITO_PADRAO = { Q1: "B", Q2: "A", Q3: "A", Q4: "B" };
-const NOTA_MAX = 10.0;
 
 let resultados = [];
 let ultimoQR = "";
 let streamAtivo = null;
 let lendo = false;
 let ultimoTick = 0;
-let detectorNativo = ("BarcodeDetector" in window)
-  ? new BarcodeDetector({ formats: ["qr_code"] })
-  : null;
+let detectorNativo = null;
+
+try {
+  if ("BarcodeDetector" in window) {
+    detectorNativo = new BarcodeDetector({ formats: ["qr_code"] });
+  }
+} catch (_) {}
 
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvasOutput");
@@ -151,23 +154,35 @@ async function iniciarCamera() {
   }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus("Navegador sem suporte à câmera. Use Chrome via HTTPS.", "erro");
+    setStatus("Abra este link diretamente no aplicativo Google Chrome (não dentro de outro app).", "erro");
     return;
   }
 
   try {
-    setStatus("Abrindo câmera traseira...");
-    streamAtivo = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 960 }, height: { ideal: 720 } }
-    });
+    setStatus("Solicitando câmera...");
+    try {
+      streamAtivo = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: "environment" }
+      });
+    } catch (_) {
+      streamAtivo = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+    }
+
     video.srcObject = streamAtivo;
     await video.play();
     lendo = true;
     setStatus("Câmera ativa! Aponte para o cartão mostrando o QR e os 4 cantos.", "ok");
     requestAnimationFrame(loopCamera);
+
+    if (!window.jsQR && !document.getElementById("jsqr-lib")) {
+      const s = document.createElement("script");
+      s.id = "jsqr-lib";
+      s.src = "https://jsdelivr.net";
+      document.body.appendChild(s);
+    }
   } catch (e) {
-    setStatus("Erro na câmera: " + (e.message || e.name), "erro");
+    setStatus("Erro: " + (e.message || e.name) + ". Toque em Ativar Câmera ou abra no Chrome.", "erro");
   }
 }
 
@@ -179,7 +194,7 @@ function extrairQR(texto) {
     if (p.toUpperCase().startsWith("GAB:")) {
       p.slice(4).split(/[-,| ]+/).forEach(item => {
         const m = item.trim().match(/^(Q\d+)([A-E])$/i);
-        if (m) res.gab[m.at(1).toUpperCase()] = m.at(2).toUpperCase();
+        if (m) res.gab[m[1].toUpperCase()] = m[2].toUpperCase();
       });
     }
   });
@@ -192,13 +207,13 @@ async function lerQRCode(imgData) {
     try {
       const codigos = await detectorNativo.detect(canvas);
       if (codigos.length > 0) {
-        const c = codigos.at(0);
+        const c = codigos[0];
         const pts = c.cornerPoints;
         return {
           data: c.rawValue,
-          cx: (pts.at(0).x + pts.at(2).x) / 2,
-          cy: (pts.at(0).y + pts.at(2).y) / 2,
-          tam: Math.hypot(pts.at(1).x - pts.at(0).x, pts.at(1).y - pts.at(0).y),
+          cx: (pts[0].x + pts[2].x) / 2,
+          cy: (pts[0].y + pts[2].y) / 2,
+          tam: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
           pts: pts
         };
       }
@@ -273,7 +288,7 @@ function encontrarMarcadores(imgData, qr) {
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * esc * W + x * esc) * 4;
-      const lum = (d.at(i) * 77 + d.at(i + 1) * 150 + d.at(i + 2) * 29) >> 8;
+      const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
       bin[y * w + x] = lum < 110 ? 1 : 0;
     }
   }
@@ -333,7 +348,6 @@ function encontrarMarcadores(imgData, qr) {
 }
 
 function criarTransformador(se, sd, id, ie) {
-  // Interpolacao bilinear projetiva rapida e livre de matrizes complexas
   return function(u, v) {
     const topX = se.x + u * (sd.x - se.x);
     const topY = se.y + u * (sd.y - se.y);
@@ -361,10 +375,10 @@ function processarCartao(imgData, qr) {
     if (dist < minD) { minD = dist; idxSD = i; }
   });
 
-  const sd = marcs.at(idxSD);
-  const id = marcs.at((idxSD + 1) % 4);
-  const ie = marcs.at((idxSD + 2) % 4);
-  const se = marcs.at((idxSD + 3) % 4);
+  const sd = marcs[idxSD];
+  const id = marcs[(idxSD + 1) % 4];
+  const ie = marcs[(idxSD + 2) % 4];
+  const se = marcs[(idxSD + 3) % 4];
   const mapear = criarTransformador(se, sd, id, ie);
 
   ctx.strokeStyle = "#00e676";
@@ -396,7 +410,7 @@ function processarCartao(imgData, qr) {
           const px = Math.round(pt.x + dx), py = Math.round(pt.y + dy);
           if (px < 0 || px >= W || py < 0 || py >= H) continue;
           const idx = (py * W + px) * 4;
-          const lum = (imgData.data.at(idx) * 77 + imgData.data.at(idx + 1) * 150 + imgData.data.at(idx + 2) * 29) >> 8;
+          const lum = (imgData.data[idx] * 77 + imgData.data[idx + 1] * 150 + imgData.data[idx + 2] * 29) >> 8;
           tot++;
           if (lum < 145) escuros++;
         }
@@ -405,7 +419,7 @@ function processarCartao(imgData, qr) {
     }
 
     leituras.sort((a, b) => b.perc - a.perc);
-    const p1 = leituras.at(0), p2 = leituras.at(1);
+    const p1 = leituras[0], p2 = leituras[1];
     let marcada = "-";
     if (p1.perc > 0.30 && p1.perc > p2.perc * 1.35) marcada = p1.letra;
     else if (p1.perc > 0.30 && p2.perc > 0.30) marcada = "DUPLA";
@@ -458,7 +472,7 @@ function baixarCSV() {
   a.click();
 }
 
-window.addEventListener("load", iniciarCamera);
+document.addEventListener("DOMContentLoaded", iniciarCamera);
 </script>
 </body>
 </html>
