@@ -1,591 +1,297 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Leitor Óptico — ESTAT-EMP2-EC</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Leitor Óptico</title>
   <script src="https://jsdelivr.net"></script>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, sans-serif;
-      text-align: center;
-      background: #121212;
-      color: #f5f5f5;
-      margin: 0;
-      padding: 12px;
-    }
-    .container { max-width: 600px; margin: 0 auto; }
-    h3 { margin: 6px 0 10px; font-size: 18px; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: #121212; color: #f5f5f5; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 12px; }
+    h1 { font-size: 1.15rem; margin-bottom: 10px; text-align: center; color: #fff; }
     #status {
-      padding: 12px;
-      margin: 8px 0;
-      border-radius: 8px;
-      background: #1e1e1e;
-      color: #ffd54f;
-      font-weight: 700;
-      font-size: 14px;
-      line-height: 1.45;
-      border: 1px solid #333;
+      width: 100%; max-width: 520px; padding: 10px 14px; border-radius: 10px;
+      background: #1e1e1e; border: 1px solid #333; text-align: center;
+      font-size: 0.92rem; font-weight: 600; color: #ffd54f; margin-bottom: 10px;
     }
-    #status.ok { color: #00e676; border-color: #00e676; }
-    #status.erro { color: #ff5252; border-color: #ff5252; }
+    #status.ok { border-color: #00e676; color: #00e676; background: #0d2618; }
+    .viewport {
+      position: relative; width: 100%; max-width: 520px; border-radius: 14px;
+      overflow: hidden; background: #000; border: 2px solid #2c2c2c;
+    }
     video { display: none; }
-    canvas {
-      display: block;
-      width: 100%;
-      height: auto;
-      border-radius: 10px;
-      border: 2px solid #333;
-      background: #000;
+    canvas { width: 100%; height: auto; display: block; }
+    #resultado {
+      width: 100%; max-width: 520px; margin-top: 12px; padding: 14px;
+      border-radius: 12px; background: #1c1c1c; border: 1px solid #333; display: none;
     }
-    .controles {
-      display: flex;
-      gap: 8px;
-      justify-content: center;
-      margin: 10px 0;
-      flex-wrap: wrap;
-    }
+    .nota-box { font-size: 1.3rem; font-weight: 800; color: #00e676; margin-bottom: 8px; }
+    .detalhes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 0.9rem; }
+    .item-q { background: #262626; padding: 8px 10px; border-radius: 8px; }
+    .correta { border-left: 4px solid #00e676; }
+    .errada { border-left: 4px solid #ff5252; }
     button {
-      background: #2979ff;
-      color: #fff;
-      border: none;
-      padding: 12px 15px;
-      font-size: 13px;
-      font-weight: 700;
-      border-radius: 6px;
-      cursor: pointer;
+      margin-top: 12px; width: 100%; padding: 12px; border: none; border-radius: 8px;
+      background: #2979ff; color: #fff; font-weight: 700; font-size: 0.95rem; cursor: pointer;
     }
-    button.verde { background: #00c853; color: #000; }
-    button.sec { background: #424242; }
-    .tabela-wrap { overflow-x: auto; margin-top: 10px; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      background: #1e1e1e;
-      font-size: 12px;
-    }
-    th, td { border: 1px solid #333; padding: 8px 4px; }
-    th { background: #262626; color: #bbb; }
-    #canvasDebug { max-width: 340px; margin: 8px auto 0; }
-    .lbl { font-size: 11px; color: #999; margin-top: 10px; display: block; }
   </style>
 </head>
 <body>
-<div class="container">
-  <h3>Leitor Óptico — ESTAT-EMP2-EC</h3>
-  <div id="status">Toque em "Ativar / Reiniciar Câmera" se não abrir automaticamente.</div>
+  <h1 id="titulo">Leitor Óptico</h1>
+  <div id="status">Iniciando câmera...</div>
 
-  <video id="video" playsinline muted autoplay></video>
-  <canvas id="canvasOutput"></canvas>
-
-  <div class="controles">
-    <button class="verde" onclick="iniciarCamera()">Ativar / Reiniciar Câmera</button>
-    <button onclick="baixarCSV()">Baixar CSV</button>
-    <button class="sec" onclick="permitirReleitura()">Ler novamente</button>
+  <div class="viewport">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="canvas"></canvas>
   </div>
 
-  <div class="tabela-wrap">
-    <table id="tabelaResultados">
-      <thead>
-        <tr>
-          <th>Prova</th>
-          <th>Q1 (2,5)</th>
-          <th>Q2 (2,5)</th>
-          <th>Q3 (2,5)</th>
-          <th>Q4 (2,5)</th>
-          <th>Nota</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+  <div id="resultado">
+    <div class="nota-box" id="notaTexto"></div>
+    <div class="detalhes" id="detalhesQuestoes"></div>
+    <button onclick="reiniciarLeitura()">Ler Próximo Cartão</button>
   </div>
 
-  <span class="lbl">Diagnóstico (marcadores e centros das bolinhas)</span>
-  <canvas id="canvasDebug"></canvas>
-</div>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const statusEl = document.getElementById('status');
+    const tituloEl = document.getElementById('titulo');
+    const resultadoEl = document.getElementById('resultado');
 
-<script>
-"use strict";
+    // Geometria exata extraida do seu codigo TikZ/LaTeX
+    // Centros das 4 ancoras pretas: SE(-0.15, 7.95), SD(12.65, 7.95), IE(-0.15, -0.35), ID(12.65, -0.35)
+    const CARD = {
+      x0: -0.15, y0: 7.95,
+      W: 12.80,  H: 8.30,
+      // QR Code: topo-direito em (12.15, 7.55), tamanho 1.55 x 1.55
+      qr: { x: 10.60, y: 7.55, size: 1.55 },
+      // Coordenadas das questoes e alternativas
+      questoesY: [4.9, 3.7, 2.5, 1.3],
+      opcoesX:   [4.8, 6.3, 7.8, 9.3, 10.8],
+      letras:    ['A', 'B', 'C', 'D', 'E'],
+      raioBolha: 0.26
+    };
 
-const QUESTOES = [
-  { num: "Q1", y: 0.3675, pts: 2.5 },
-  { num: "Q2", y: 0.5120, pts: 2.5 },
-  { num: "Q3", y: 0.6566, pts: 2.5 },
-  { num: "Q4", y: 0.8012, pts: 2.5 }
-];
-
-const OPCOES_X = { A: 0.3867, B: 0.5039, C: 0.6211, D: 0.7383, E: 0.8555 };
-const GABARITO_PADRAO = { Q1: "B", Q2: "A", Q3: "A", Q4: "B" };
-
-let resultados = [];
-let ultimoQR = "";
-let streamAtivo = null;
-let lendo = false;
-let ultimoTick = 0;
-let detectorNativo = null;
-let overlayAtual = null;
-
-try {
-  if ("BarcodeDetector" in window) {
-    detectorNativo = new BarcodeDetector({ formats: ["qr_code"] });
-  }
-} catch (_) {}
-
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvasOutput");
-const ctx = canvas.getContext("2d", { willReadFrequently: true });
-const dbg = document.getElementById("canvasDebug");
-const dbgCtx = dbg.getContext("2d");
-
-function setStatus(msg, tipo = "") {
-  const el = document.getElementById("status");
-  el.textContent = msg;
-  el.className = tipo;
-}
-
-function fmt(n) {
-  return n.toFixed(1).replace(".", ",");
-}
-
-async function iniciarCamera() {
-  lendo = false;
-  overlayAtual = null;
-  if (streamAtivo) {
-    streamAtivo.getTracks().forEach(t => t.stop());
-    streamAtivo = null;
-  }
-
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus("Abra este link diretamente no Google Chrome.", "erro");
-    return;
-  }
-
-  try {
-    setStatus("Solicitando câmera...");
-    try {
-      streamAtivo = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      });
-    } catch (_) {
-      streamAtivo = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-    }
-
-    video.srcObject = streamAtivo;
-    await video.play();
-    lendo = true;
-    setStatus("Câmera ativa! Enquadre o QR Code e os 4 quadrados dos cantos.", "ok");
-    requestAnimationFrame(loopCamera);
-  } catch (e) {
-    setStatus("Erro na câmera: " + (e.message || e.name), "erro");
-  }
-}
-function extrairQR(texto) {
-  const res = { id: texto, gab: { ...GABARITO_PADRAO } };
-  String(texto).split(";").forEach(parte => {
-    const p = parte.trim();
-    if (p.toUpperCase().startsWith("ID-PROVA:")) res.id = p.slice(9).trim();
-    if (p.toUpperCase().startsWith("GAB:")) {
-      p.slice(4).split(/[-,| ]+/).forEach(item => {
-        const m = item.trim().match(/^(Q\d+)([A-E])$/i);
-        if (m) res.gab[m[1].toUpperCase()] = m[2].toUpperCase();
-      });
-    }
-  });
-  return res;
-}
-
-async function lerQRCode(imgData) {
-  if (detectorNativo) {
-    try {
-      const codigos = await detectorNativo.detect(canvas);
-      if (codigos.length > 0) {
-        const c = codigos[0];
-        const pts = c.cornerPoints;
-        return {
-          data: c.rawValue,
-          cx: (pts[0].x + pts[2].x) / 2,
-          cy: (pts[0].y + pts[2].y) / 2,
-          tam: Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y),
-          pts: pts
-        };
+    let travado = false;
+    let gabaritoAtual = null;
+    let provaIdAtual = '';
+    async function iniciarCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        video.srcObject = stream;
+        await video.play();
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        statusEl.textContent = 'Aponte para o cartão (pode ser na vertical ou horizontal)';
+        requestAnimationFrame(processarFrame);
+      } catch (e) {
+        statusEl.textContent = 'Erro ao acessar a câmera. Verifique as permissões.';
       }
-    } catch (_) {}
-  }
+    }
 
-  if (typeof window.jsQR === "function") {
-    const qr = window.jsQR(imgData.data, imgData.width, imgData.height, {
-      inversionAttempts: "attemptBoth"
-    });
-    if (qr) {
-      const loc = qr.location;
+    function parseQR(texto) {
+      const mId = texto.match(/ID-PROVA:([^;]+)/i);
+      const mGab = texto.match(/GAB:([^;]+)/i);
+      if (!mGab) return null;
+      const gab = {};
+      mGab[1].split('-').forEach(par => {
+        const m = par.match(/Q(\d+)([A-E])/i);
+        if (m) gab[parseInt(m[1], 10)] = m[2].toUpperCase();
+      });
+      return { id: mId ? mId[1] : 'PROVA', gab };
+    }
+
+    // Converte coordenada TikZ (x, y) para pixel usando os vetores do QR Code
+    function tikzParaPixel(tx, ty, qrLoc) {
+      const uQr0 = (CARD.qr.x - CARD.x0) / CARD.W;
+      const vQr0 = (CARD.y0 - CARD.qr.y) / CARD.H;
+      const duQr = CARD.qr.size / CARD.W;
+      const dvQr = CARD.qr.size / CARD.H;
+
+      const u = (tx - CARD.x0) / CARD.W;
+      const v = (CARD.y0 - ty) / CARD.H;
+
+      const ru = (u - uQr0) / duQr;
+      const rv = (v - vQr0) / dvQr;
+
+      const p0 = qrLoc.topLeftCorner;
+      const vx = { x: qrLoc.topRightCorner.x - p0.x, y: qrLoc.topRightCorner.y - p0.y };
+      const vy = { x: qrLoc.bottomLeftCorner.x - p0.x, y: qrLoc.bottomLeftCorner.y - p0.y };
+
       return {
-        data: qr.data,
-        cx: (loc.topLeftCorner.x + loc.bottomRightCorner.x) / 2,
-        cy: (loc.topLeftCorner.y + loc.bottomRightCorner.y) / 2,
-        tam: Math.hypot(loc.topRightCorner.x - loc.topLeftCorner.x, loc.topRightCorner.y - loc.topLeftCorner.y),
-        pts: [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner]
+        x: p0.x + ru * vx.x + rv * vy.x,
+        y: p0.y + ru * vx.y + rv * vy.y
       };
     }
-  }
-  return null;
-}
 
-function desenharOverlay(ov) {
-  if (!ov) return;
-  if (ov.qr && ov.qr.pts) {
-    ctx.strokeStyle = "#00e676";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ov.qr.pts.forEach((p, idx) => idx === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
-    ctx.closePath();
-    ctx.stroke();
-  }
-  if (ov.cantos) {
-    const { se, sd, id, ie } = ov.cantos;
-    ctx.strokeStyle = "#00e676";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(se.x, se.y);
-    ctx.lineTo(sd.x, sd.y);
-    ctx.lineTo(id.x, id.y);
-    ctx.lineTo(ie.x, ie.y);
-    ctx.closePath();
-    ctx.stroke();
+    // Refina o centro exato de cada quadrado preto proximo ao ponto previsto
+    function refinarAncora(imgData, pred, raioPx) {
+      const { data, width, height } = imgData;
+      const xMin = Math.max(0, Math.floor(pred.x - raioPx));
+      const xMax = Math.min(width - 1, Math.ceil(pred.x + raioPx));
+      const yMin = Math.max(0, Math.floor(pred.y - raioPx));
+      const yMax = Math.min(height - 1, Math.ceil(pred.y + raioPx));
 
-    [
-      { p: se, lbl: "SE", cor: "#00e676" },
-      { p: sd, lbl: "SD", cor: "#00b0ff" },
-      { p: id, lbl: "ID", cor: "#00e676" },
-      { p: ie, lbl: "IE", cor: "#00e676" }
-    ].forEach(item => {
-      ctx.strokeStyle = item.cor;
-      ctx.lineWidth = 4;
-      ctx.strokeRect(item.p.rect.x, item.p.rect.y, item.p.rect.w, item.p.rect.h);
-      ctx.fillStyle = item.cor;
-      ctx.font = "bold 18px sans-serif";
-      ctx.fillText(item.lbl, item.p.rect.x, Math.max(22, item.p.rect.y - 6));
-    });
-  } else if (ov.parciais && ov.parciais.length > 0) {
-    ov.parciais.forEach(p => {
-      ctx.strokeStyle = "#ffd54f";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(p.rect.x, p.rect.y, p.rect.w, p.rect.h);
-    });
-  }
-}
-
-async function loopCamera(agora) {
-  if (!lendo) return;
-
-  if (video.readyState >= 2 && video.videoWidth > 0) {
-    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-    }
-    ctx.drawImage(video, 0, 0);
-
-    if (overlayAtual && (agora - overlayAtual.ts < 2000)) {
-      desenharOverlay(overlayAtual);
+      let sumX = 0, sumY = 0, count = 0;
+      for (let y = yMin; y <= yMax; y++) {
+        for (let x = xMin; x <= xMax; x++) {
+          const i = (y * width + x) * 4;
+          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          if (lum < 95) { sumX += x; sumY += y; count++; }
+        }
+      }
+      if (count < 15) return null;
+      return { x: sumX / count, y: sumY / count };
     }
 
-    if (agora - ultimoTick > 200) {
-      ultimoTick = agora;
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const qr = await lerQRCode(imgData);
+    // Interpolacao bilinear entre os 4 cantos reais detectados (SE, SD, IE, ID)
+    function mapearUV(u, v, c) {
+      const topX = c.SE.x + u * (c.SD.x - c.SE.x);
+      const topY = c.SE.y + u * (c.SD.y - c.SE.y);
+      const botX = c.IE.x + u * (c.ID.x - c.IE.x);
+      const botY = c.IE.y + u * (c.ID.y - c.IE.y);
+      return {
+        x: topX + v * (botX - topX),
+        y: topY + v * (botY - topY)
+      };
+    }
 
-      if (qr) {
-        const resMarc = encontrarMarcadores(imgData, qr);
-        overlayAtual = {
-          qr,
-          cantos: resMarc.cantos,
-          parciais: resMarc.parciais,
-          ts: agora
-        };
-        desenharOverlay(overlayAtual);
+    function medirEscuridao(imgData, pt, raioPx) {
+      const { data, width, height } = imgData;
+      let total = 0, escuros = 0;
+      const r2 = raioPx * raioPx;
+      for (let dy = -raioPx; dy <= raioPx; dy++) {
+        for (let dx = -raioPx; dx <= raioPx; dx++) {
+          if (dx * dx + dy * dy > r2) continue;
+          const x = Math.round(pt.x + dx), y = Math.round(pt.y + dy);
+          if (x < 0 || x >= width || y < 0 || y >= height) continue;
+          const i = (y * width + x) * 4;
+          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          total++;
+          if (lum < 125) escuros++;
+        }
+      }
+      return total > 0 ? escuros / total : 0;
+    }
 
-        if (resMarc.cantos) {
-          if (qr.data !== ultimoQR) {
-            const leitura = processarCartao(imgData, qr, resMarc.cantos);
-            if (leitura) {
-              ultimoQR = qr.data;
-              registrar(leitura);
-              if (navigator.vibrate) navigator.vibrate(150);
-              setStatus(
-                "Prova: " + leitura.id + " | " + leitura.resumo + " | Nota: " + fmt(leitura.nota) + "/10,0",
-                "ok"
-              );
+    function processarFrame() {
+      if (!travado && video.readyState === video.HAVE_ENOUGH_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const qr = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
+
+        if (qr) {
+          const info = parseQR(qr.data);
+          if (info) {
+            provaIdAtual = info.id;
+            gabaritoAtual = info.gab;
+            tituloEl.textContent = `Leitor Óptico — ${provaIdAtual}`;
+
+            // Desenha contorno do QR
+            ctx.strokeStyle = '#00e676';
+            ctx.lineWidth = 3;
+            const loc = qr.location;
+            ctx.beginPath();
+            ctx.moveTo(loc.topLeftCorner.x, loc.topLeftCorner.y);
+            ctx.lineTo(loc.topRightCorner.x, loc.topRightCorner.y);
+            ctx.lineTo(loc.bottomRightCorner.x, loc.bottomRightCorner.y);
+            ctx.lineTo(loc.bottomLeftCorner.x, loc.bottomLeftCorner.y);
+            ctx.closePath();
+            ctx.stroke();
+
+            // Estima tamanho do QR em pixels para definir janela de busca das ancoras
+            const qrPx = Math.hypot(loc.topRightCorner.x - loc.topLeftCorner.x, loc.topRightCorner.y - loc.topLeftCorner.y);
+            const raioBusca = qrPx * 0.55;
+
+            const cantos = {
+              SE: refinarAncora(imgData, tikzParaPixel(-0.15,  7.95, loc), raioBusca),
+              SD: refinarAncora(imgData, tikzParaPixel(12.65,  7.95, loc), raioBusca),
+              IE: refinarAncora(imgData, tikzParaPixel(-0.15, -0.35, loc), raioBusca),
+              ID: refinarAncora(imgData, tikzParaPixel(12.65, -0.35, loc), raioBusca)
+            };
+
+            const achados = Object.values(cantos).filter(Boolean).length;
+            if (achados < 4) {
+              statusEl.className = '';
+              statusEl.textContent = `QR lido! Detectados ${achados}/4 cantos. Afaste um pouco a câmera.`;
+            } else {
+              // Desenha poligono dos 4 cantos
+              ctx.strokeStyle = '#00e676';
+              ctx.lineWidth = 3;
+              ctx.beginPath();
+              ctx.moveTo(cantos.SE.x, cantos.SE.y);
+              ctx.lineTo(cantos.SD.x, cantos.SD.y);
+              ctx.lineTo(cantos.ID.x, cantos.ID.y);
+              ctx.lineTo(cantos.IE.x, cantos.IE.y);
+              ctx.closePath();
+              ctx.stroke();
+
+              // Leitura das 4 questoes
+              const larguraPx = Math.hypot(cantos.SD.x - cantos.SE.x, cantos.SD.y - cantos.SE.y);
+              const raioBolhaPx = Math.max(5, Math.round((CARD.raioBolha / CARD.W) * larguraPx * 0.85));
+              const respostas = [];
+
+              CARD.questoesY.forEach((qy, idxQ) => {
+                const v = (CARD.y0 - qy) / CARD.H;
+                let melhorLetra = '-';
+                let maiorScore = 0;
+
+                CARD.opcoesX.forEach((ox, idxO) => {
+                  const u = (ox - CARD.x0) / CARD.W;
+                  const pt = mapearUV(u, v, cantos);
+                  const score = medirEscuridao(imgData, pt, raioBolhaPx);
+
+                  ctx.beginPath();
+                  ctx.arc(pt.x, pt.y, raioBolhaPx, 0, Math.PI * 2);
+                  ctx.strokeStyle = score > 0.42 ? '#00e676' : '#2979ff';
+                  ctx.lineWidth = 2;
+                  ctx.stroke();
+
+                  if (score > 0.42 && score > maiorScore) {
+                    maiorScore = score;
+                    melhorLetra = CARD.letras[idxO];
+                  }
+                });
+                respostas.push({ q: idxQ + 1, marcada: melhorLetra, gabarito: gabaritoAtual[idxQ + 1] });
+              });
+
+              exibirResultado(respostas);
             }
           }
-        } else {
-          setStatus(`QR lido! Detectados ${resMarc.parciais.length}/4 cantos pretos. Enquadre todos os 4 cantos.`);
         }
       }
-    }
-  }
-  requestAnimationFrame(loopCamera);
-}
-function encontrarMarcadores(imgData, qr) {
-  const W = imgData.width, H = imgData.height;
-  const esc = Math.max(2, Math.floor(Math.min(W, H) / 360));
-  const w = Math.floor(W / esc), h = Math.floor(H / esc), tot = w * h;
-  const lumArr = new Uint8Array(tot);
-  const d = imgData.data;
-
-  let somaLum = 0;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * esc * W + x * esc) * 4;
-      const lum = (d[i] * 77 + d[i + 1] * 150 + d[i + 2] * 29) >> 8;
-      lumArr[y * w + x] = lum;
-      somaLum += lum;
-    }
-  }
-
-  const mediaLum = somaLum / tot;
-  const limiar = Math.max(65, Math.min(145, mediaLum * 0.65));
-
-  const bin = new Uint8Array(tot);
-  for (let i = 0; i < tot; i++) {
-    bin[i] = lumArr[i] < limiar ? 1 : 0;
-  }
-
-  const vis = new Uint8Array(tot);
-  const fila = new Int32Array(tot);
-  const cands = [];
-  const minArea = Math.max(15, tot * 0.0002);
-  const maxArea = tot * 0.035;
-
-  for (let ini = 0; ini < tot; ini++) {
-    if (!bin[ini] || vis[ini]) continue;
-    let p0 = 0, p1 = 0, area = 0, x0 = w, x1 = 0, y0 = h, y1 = 0;
-    fila[p1++] = ini;
-    vis[ini] = 1;
-
-    while (p0 < p1) {
-      const cur = fila[p0++];
-      const x = cur % w, y = Math.floor(cur / w);
-      area++;
-      if (x < x0) x0 = x; if (x > x1) x1 = x;
-      if (y < y0) y0 = y; if (y > y1) y1 = y;
-      if (area > maxArea) break;
-
-      const viz = [cur - 1, cur + 1, cur - w, cur + w];
-      for (const nx of viz) {
-        if (nx >= 0 && nx < tot && bin[nx] && !vis[nx]) {
-          if (Math.abs((nx % w) - x) + Math.abs(Math.floor(nx / w) - y) === 1) {
-            vis[nx] = 1;
-            fila[p1++] = nx;
-          }
-        }
-      }
+      requestAnimationFrame(processarFrame);
     }
 
-    if (area < minArea || area > maxArea) continue;
-    const bw = x1 - x0 + 1, bh = y1 - y0 + 1;
-    const prop = bw / bh;
-    const solidez = area / (bw * bh);
-
-    // Marcadores de canto são quadrados sólidos (solidez >= 0.68)
-    if (prop < 0.50 || prop > 2.0 || solidez < 0.68) continue;
-
-    const cx = ((x0 + x1) / 2) * esc;
-    const cy = ((y0 + y1) / 2) * esc;
-
-    // Ignora elementos dentro do próprio QR Code
-    if (Math.hypot(cx - qr.cx, cy - qr.cy) < qr.tam * 0.70) continue;
-
-    cands.push({
-      x: cx,
-      y: cy,
-      area,
-      rect: { x: x0 * esc, y: y0 * esc, w: bw * esc, h: bh * esc }
-    });
-  }
-
-  cands.sort((a, b) => b.area - a.area);
-  const unicos = [];
-  for (const c of cands) {
-    if (!unicos.some(s => Math.hypot(s.x - c.x, s.y - c.y) < Math.max(s.rect.w, s.rect.h) * 1.2)) {
-      unicos.push(c);
-    }
-    if (unicos.length === 8) break;
-  }
-
-  if (unicos.length < 4) {
-    return { cantos: null, parciais: unicos };
-  }
-
-  // Escolhe os 4 marcadores que formam o maior quadrilátero externo
-  let melhorQuad = null, maiorAreaQuad = 0;
-  for (let i = 0; i < unicos.length; i++) {
-    for (let j = i + 1; j < unicos.length; j++) {
-      for (let k = j + 1; k < unicos.length; k++) {
-        for (let l = k + 1; l < unicos.length; l++) {
-          const pts = [unicos[i], unicos[j], unicos[k], unicos[l]];
-          const mx = pts.reduce((s, p) => s + p.x, 0) / 4;
-          const my = pts.reduce((s, p) => s + p.y, 0) / 4;
-          pts.sort((a, b) => Math.atan2(a.y - my, a.x - mx) - Math.atan2(b.y - my, b.x - mx));
-
-          let aQuad = 0;
-          for (let m = 0; m < 4; m++) {
-            const n = (m + 1) % 4;
-            aQuad += pts[m].x * pts[n].y - pts[n].x * pts[m].y;
-          }
-          aQuad = Math.abs(aQuad) / 2;
-
-          if (aQuad > maiorAreaQuad) {
-            maiorAreaQuad = aQuad;
-            melhorQuad = pts;
-          }
-        }
-      }
-    }
-  }
-
-  if (!melhorQuad) return { cantos: null, parciais: unicos.slice(0, 4) };
-
-  // Orienta os 4 cantos pelo marcador mais próximo do QR Code (Superior Direito - SD)
-  let idxSD = 0, minD = Infinity;
-  melhorQuad.forEach((p, i) => {
-    const dist = Math.hypot(p.x - qr.cx, p.y - qr.cy);
-    if (dist < minD) { minD = dist; idxSD = i; }
-  });
-
-  return {
-    cantos: {
-      sd: melhorQuad[idxSD],
-      id: melhorQuad[(idxSD + 1) % 4],
-      ie: melhorQuad[(idxSD + 2) % 4],
-      se: melhorQuad[(idxSD + 3) % 4]
-    },
-    parciais: melhorQuad
-  };
-}
-
-function criarTransformador(se, sd, id, ie) {
-  return function(u, v) {
-    const topX = se.x + u * (sd.x - se.x);
-    const topY = se.y + u * (sd.y - se.y);
-    const botX = ie.x + u * (id.x - ie.x);
-    const botY = ie.y + u * (id.y - ie.y);
-    return {
-      x: topX + v * (botX - topX),
-      y: topY + v * (botY - topY)
-    };
-  };
-}
-
-function processarCartao(imgData, qr, cantos) {
-  const W = imgData.width, H = imgData.height;
-  const { se, sd, id, ie } = cantos;
-  const mapear = criarTransformador(se, sd, id, ie);
-
-  dbg.width = W;
-  dbg.height = H;
-  dbgCtx.putImageData(imgData, 0, 0);
-
-  dbgCtx.strokeStyle = "#00e676";
-  dbgCtx.lineWidth = 4;
-  dbgCtx.beginPath();
-  dbgCtx.moveTo(se.x, se.y);
-  dbgCtx.lineTo(sd.x, sd.y);
-  dbgCtx.lineTo(id.x, id.y);
-  dbgCtx.lineTo(ie.x, ie.y);
-  dbgCtx.closePath();
-  dbgCtx.stroke();
-
-  const infoQR = extrairQR(qr.data);
-  const larg = Math.hypot(sd.x - se.x, sd.y - se.y);
-  const rBol = larg * (0.26 / 12.8);
-  const rIn = Math.max(2, rBol * 0.35);
-  const rOut = Math.max(5, rBol * 0.80);
-
-  let nota = 0;
-  const notasQ = {};
-  const resumoArr = [];
-
-  for (const q of QUESTOES) {
-    const leituras = [];
-    for (const [letra, u] of Object.entries(OPCOES_X)) {
-      const pt = mapear(u, q.y);
-      let escuros = 0, tot = 0;
-      for (let dy = -Math.ceil(rOut); dy <= Math.ceil(rOut); dy++) {
-        for (let dx = -Math.ceil(rOut); dx <= Math.ceil(rOut); dx++) {
-          const dist = Math.hypot(dx, dy);
-          if (dist < rIn || dist > rOut) continue;
-          const px = Math.round(pt.x + dx), py = Math.round(pt.y + dy);
-          if (px < 0 || px >= W || py < 0 || py >= H) continue;
-          const idx = (py * W + px) * 4;
-          const lum = (imgData.data[idx] * 77 + imgData.data[idx + 1] * 150 + imgData.data[idx + 2] * 29) >> 8;
-          tot++;
-          if (lum < 140) escuros++;
-        }
-      }
-      leituras.push({ letra, perc: tot ? escuros / tot : 0, pt });
+    function exibirResultado(respostas) {
+      travado = true;
+      statusEl.className = 'ok';
+      statusEl.textContent = 'Cartão lido com sucesso!';
+      let acertos = 0;
+      const html = respostas.map(r => {
+        const ok = r.marcada === r.gabarito;
+        if (ok) acertos++;
+        return `<div class="item-q ${ok ? 'correta' : 'errada'}">
+          <strong>Q0${r.q}:</strong> Marcada <b>${r.marcada}</b> (Gab: ${r.gabarito})
+        </div>`;
+      }).join('');
+      document.getElementById('notaTexto').textContent = `Acertos: ${acertos} / ${respostas.length}`;
+      document.getElementById('detalhesQuestoes').innerHTML = html;
+      resultadoEl.style.display = 'block';
     }
 
-    leituras.sort((a, b) => b.perc - a.perc);
-    const p1 = leituras[0], p2 = leituras[1];
-    let marcada = "-";
-    if (p1.perc > 0.30 && p1.perc > p2.perc * 1.35) marcada = p1.letra;
-    else if (p1.perc > 0.30 && p2.perc > 0.30) marcada = "DUPLA";
+    function reiniciarLeitura() {
+      travado = false;
+      resultadoEl.style.display = 'none';
+      statusEl.className = '';
+      statusEl.textContent = 'Aponte para o próximo cartão...';
+    }
 
-    const ok = marcada === infoQR.gab[q.num];
-    const pts = ok ? q.pts : 0;
-    nota += pts;
-    notasQ[q.num] = marcada + (ok ? " ✓ " : " ✗ ") + fmt(pts);
-    resumoArr.push(q.num + ":" + marcada + "(" + fmt(pts) + ")");
-
-    leituras.forEach(l => {
-      dbgCtx.beginPath();
-      dbgCtx.arc(l.pt.x, l.pt.y, rOut + 2, 0, Math.PI * 2);
-      dbgCtx.lineWidth = 3;
-      dbgCtx.strokeStyle = l.letra === marcada ? "#00e676" : "#ff5252";
-      dbgCtx.stroke();
-    });
-  }
-
-  return { id: infoQR.id, notasQ, resumo: resumoArr.join(" | "), nota };
-}
-
-function registrar(item) {
-  resultados.push(item);
-  const tr = document.createElement("tr");
-  [item.id, item.notasQ.Q1, item.notasQ.Q2, item.notasQ.Q3, item.notasQ.Q4, fmt(item.nota) + "/10,0"]
-    .forEach(txt => {
-      const td = document.createElement("td");
-      td.textContent = txt;
-      tr.appendChild(td);
-    });
-  document.querySelector("#tabelaResultados tbody").prepend(tr);
-}
-
-function permitirReleitura() {
-  ultimoQR = "";
-  overlayAtual = null;
-  setStatus("Pronto para ler o próximo cartão.", "ok");
-}
-
-function baixarCSV() {
-  if (!resultados.length) return setStatus("Nenhum cartão lido ainda.", "erro");
-  const linhas = ["ID_Prova;Q1;Q2;Q3;Q4;Nota_Final"];
-  resultados.forEach(r => {
-    linhas.push([r.id, r.notasQ.Q1, r.notasQ.Q2, r.notasQ.Q3, r.notasQ.Q4, fmt(r.nota)].join(";"));
-  });
-  const blob = new Blob(["\uFEFF" + linhas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "notas_ESTAT_EMP2_EC.csv";
-  a.click();
-}
-
-document.addEventListener("DOMContentLoaded", iniciarCamera);
-</script>
+    iniciarCamera();
+  </script>
 </body>
 </html>
