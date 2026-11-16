@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>Leitor Óptico</title>
-  <script src="https://jsdelivr.net"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     body { background: #121212; color: #f5f5f5; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 12px; }
@@ -15,6 +15,7 @@
       font-size: 0.92rem; font-weight: 600; color: #ffd54f; margin-bottom: 10px;
     }
     #status.ok { border-color: #00e676; color: #00e676; background: #0d2618; }
+    #status.erro { border-color: #ff5252; color: #ff5252; background: #2a1212; }
     .viewport {
       position: relative; width: 100%; max-width: 520px; border-radius: 14px;
       overflow: hidden; background: #000; border: 2px solid #2c2c2c;
@@ -59,213 +60,389 @@
     const tituloEl = document.getElementById('titulo');
     const resultadoEl = document.getElementById('resultado');
 
-    // Geometria exata extraida do seu codigo TikZ/LaTeX
-    // Centros das 4 ancoras pretas: SE(-0.15, 7.95), SD(12.65, 7.95), IE(-0.15, -0.35), ID(12.65, -0.35)
-    const CARD = {
-      x0: -0.15, y0: 7.95,
-      W: 12.80,  H: 8.30,
-      // QR Code: topo-direito em (12.15, 7.55), tamanho 1.55 x 1.55
-      qr: { x: 10.60, y: 7.55, size: 1.55 },
-      // Coordenadas das questoes e alternativas
+    // Gabarito fica somente no código (o QR Code identifica apenas a prova)
+    const GABARITO = { 1: 'B', 2: 'A', 3: 'A', 4: 'B' };
+
+    // Geometria do cartão (cm), extraída do TikZ
+    // Centros das 4 âncoras: SE(-0.15, 7.95), SD(12.65, 7.95), IE(-0.15, -0.35), ID(12.65, -0.35)
+    const CARTAO = { W: 12.8, H: 8.3, x0: -0.15, y0: 7.95 };
+    const CFG = {
       questoesY: [4.9, 3.7, 2.5, 1.3],
       opcoesX:   [4.8, 6.3, 7.8, 9.3, 10.8],
       letras:    ['A', 'B', 'C', 'D', 'E'],
-      raioBolha: 0.26
+      raioBolha: 0.26,   // cm
+      escala: 60,        // px por cm na imagem retificada
+      limiarPreench: 0.5,
+      estaveis: 3        // leituras iguais seguidas antes de pontuar
     };
 
     let travado = false;
-    let gabaritoAtual = null;
-    let provaIdAtual = '';
+    let ultimoProc = 0;
+    let ultimaChave = null;
+    let estavel = 0;
+    let deteccao = null;
+    let provaId = null;
+
     async function iniciarCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        mostrarErro('Este navegador não permite acesso à câmera (use HTTPS).');
+        return;
+      }
+      if (typeof jsQR === 'undefined') {
+        mostrarErro('Biblioteca de leitura de QR não carregou. Verifique a conexão.');
+        return;
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
           audio: false
         });
         video.srcObject = stream;
+        await new Promise(r => { video.onloadedmetadata = r; });
         await video.play();
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        statusEl.textContent = 'Aponte para o cartão (pode ser na vertical ou horizontal)';
-        requestAnimationFrame(processarFrame);
+        statusEl.textContent = 'Aponte a câmera para o cartão';
+        requestAnimationFrame(loop);
       } catch (e) {
-        statusEl.textContent = 'Erro ao acessar a câmera. Verifique as permissões.';
+        mostrarErro('Não foi possível acessar a câmera: ' + e.name);
       }
     }
 
-    function parseQR(texto) {
-      const mId = texto.match(/ID-PROVA:([^;]+)/i);
-      const mGab = texto.match(/GAB:([^;]+)/i);
-      if (!mGab) return null;
-      const gab = {};
-      mGab[1].split('-').forEach(par => {
-        const m = par.match(/Q(\d+)([A-E])/i);
-        if (m) gab[parseInt(m[1], 10)] = m[2].toUpperCase();
-      });
-      return { id: mId ? mId[1] : 'PROVA', gab };
+    function mostrarErro(msg) {
+      statusEl.className = 'erro';
+      statusEl.textContent = msg;
     }
 
-    // Converte coordenada TikZ (x, y) para pixel usando os vetores do QR Code
-    function tikzParaPixel(tx, ty, qrLoc) {
-      const uQr0 = (CARD.qr.x - CARD.x0) / CARD.W;
-      const vQr0 = (CARD.y0 - CARD.qr.y) / CARD.H;
-      const duQr = CARD.qr.size / CARD.W;
-      const dvQr = CARD.qr.size / CARD.H;
-
-      const u = (tx - CARD.x0) / CARD.W;
-      const v = (CARD.y0 - ty) / CARD.H;
-
-      const ru = (u - uQr0) / duQr;
-      const rv = (v - vQr0) / dvQr;
-
-      const p0 = qrLoc.topLeftCorner;
-      const vx = { x: qrLoc.topRightCorner.x - p0.x, y: qrLoc.topRightCorner.y - p0.y };
-      const vy = { x: qrLoc.bottomLeftCorner.x - p0.x, y: qrLoc.bottomLeftCorner.y - p0.y };
-
-      return {
-        x: p0.x + ru * vx.x + rv * vy.x,
-        y: p0.y + ru * vx.y + rv * vy.y
-      };
+    function loop(t) {
+      requestAnimationFrame(loop);
+      if (video.readyState < 2) return;
+      if (travado) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      if (t - ultimoProc > 150) {
+        ultimoProc = t;
+        processarQuadro();
+      }
+      desenharDeteccao();
     }
 
-    // Refina o centro exato de cada quadrado preto proximo ao ponto previsto
-    function refinarAncora(imgData, pred, raioPx) {
-      const { data, width, height } = imgData;
-      const xMin = Math.max(0, Math.floor(pred.x - raioPx));
-      const xMax = Math.min(width - 1, Math.ceil(pred.x + raioPx));
-      const yMin = Math.max(0, Math.floor(pred.y - raioPx));
-      const yMax = Math.min(height - 1, Math.ceil(pred.y + raioPx));
+    // ---------- Pre-processamento ----------
 
-      let sumX = 0, sumY = 0, count = 0;
-      for (let y = yMin; y <= yMax; y++) {
-        for (let x = xMin; x <= xMax; x++) {
-          const i = (y * width + x) * 4;
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          if (lum < 95) { sumX += x; sumY += y; count++; }
+    // Escala de cinza + binarizacao adaptativa (imagem integral)
+    function binarizar(data, w, h) {
+      const gray = new Uint8Array(w * h);
+      for (let i = 0, p = 0; i < w * h; i++, p += 4) {
+        gray[i] = (data[p] * 77 + data[p + 1] * 150 + data[p + 2] * 29) >> 8;
+      }
+      const W1 = w + 1;
+      const integ = new Float64Array(W1 * (h + 1));
+      for (let y = 1; y <= h; y++) {
+        let rowSum = 0;
+        for (let x = 1; x <= w; x++) {
+          rowSum += gray[(y - 1) * w + (x - 1)];
+          integ[y * W1 + x] = integ[(y - 1) * W1 + x] + rowSum;
         }
       }
-      if (count < 15) return null;
-      return { x: sumX / count, y: sumY / count };
-    }
-
-    // Interpolacao bilinear entre os 4 cantos reais detectados (SE, SD, IE, ID)
-    function mapearUV(u, v, c) {
-      const topX = c.SE.x + u * (c.SD.x - c.SE.x);
-      const topY = c.SE.y + u * (c.SD.y - c.SE.y);
-      const botX = c.IE.x + u * (c.ID.x - c.IE.x);
-      const botY = c.IE.y + u * (c.ID.y - c.IE.y);
-      return {
-        x: topX + v * (botX - topX),
-        y: topY + v * (botY - topY)
-      };
-    }
-
-    function medirEscuridao(imgData, pt, raioPx) {
-      const { data, width, height } = imgData;
-      let total = 0, escuros = 0;
-      const r2 = raioPx * raioPx;
-      for (let dy = -raioPx; dy <= raioPx; dy++) {
-        for (let dx = -raioPx; dx <= raioPx; dx++) {
-          if (dx * dx + dy * dy > r2) continue;
-          const x = Math.round(pt.x + dx), y = Math.round(pt.y + dy);
-          if (x < 0 || x >= width || y < 0 || y >= height) continue;
-          const i = (y * width + x) * 4;
-          const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          total++;
-          if (lum < 125) escuros++;
+      const r = Math.max(8, Math.round(w / 16));
+      const bin = new Uint8Array(w * h);
+      for (let y = 0; y < h; y++) {
+        const y0 = Math.max(0, y - r), y1 = Math.min(h, y + r + 1);
+        for (let x = 0; x < w; x++) {
+          const x0 = Math.max(0, x - r), x1 = Math.min(w, x + r + 1);
+          const area = (x1 - x0) * (y1 - y0);
+          const soma = integ[y1 * W1 + x1] - integ[y0 * W1 + x1] - integ[y1 * W1 + x0] + integ[y0 * W1 + x0];
+          if (gray[y * w + x] < (soma / area) * 0.75) bin[y * w + x] = 1;
         }
       }
-      return total > 0 ? escuros / total : 0;
+      return { gray, bin };
     }
 
-    function processarFrame() {
-      if (!travado && video.readyState === video.HAVE_ENOUGH_DATA) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const qr = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
+    // ---------- Deteccao das ancoras ----------
 
-        if (qr) {
-          const info = parseQR(qr.data);
-          if (info) {
-            provaIdAtual = info.id;
-            gabaritoAtual = info.gab;
-            tituloEl.textContent = `Leitor Óptico — ${provaIdAtual}`;
+    // Componentes conectados (regioes escuras)
+    function acharBlobs(bin, w, h) {
+      const vis = new Uint8Array(w * h);
+      const stack = new Int32Array(w * h);
+      const blobs = [];
+      for (let s = 0; s < w * h; s++) {
+        if (!bin[s] || vis[s]) continue;
+        let sp = 0;
+        stack[sp++] = s; vis[s] = 1;
+        let minX = w, maxX = 0, minY = h, maxY = 0, n = 0, sx = 0, sy = 0;
+        while (sp > 0) {
+          const p = stack[--sp];
+          const x = p % w, y = (p - x) / w;
+          n++; sx += x; sy += y;
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (x > 0)     { const q = p - 1; if (bin[q] && !vis[q]) { vis[q] = 1; stack[sp++] = q; } }
+          if (x < w - 1) { const q = p + 1; if (bin[q] && !vis[q]) { vis[q] = 1; stack[sp++] = q; } }
+          if (y > 0)     { const q = p - w; if (bin[q] && !vis[q]) { vis[q] = 1; stack[sp++] = q; } }
+          if (y < h - 1) { const q = p + w; if (bin[q] && !vis[q]) { vis[q] = 1; stack[sp++] = q; } }
+        }
+        blobs.push({ minX, maxX, minY, maxY, n, sx, sy });
+      }
+      return blobs;
+    }
 
-            // Desenha contorno do QR
-            ctx.strokeStyle = '#00e676';
-            ctx.lineWidth = 3;
-            const loc = qr.location;
-            ctx.beginPath();
-            ctx.moveTo(loc.topLeftCorner.x, loc.topLeftCorner.y);
-            ctx.lineTo(loc.topRightCorner.x, loc.topRightCorner.y);
-            ctx.lineTo(loc.bottomRightCorner.x, loc.bottomRightCorner.y);
-            ctx.lineTo(loc.bottomLeftCorner.x, loc.bottomLeftCorner.y);
-            ctx.closePath();
-            ctx.stroke();
+    // Filtra quadrados solidos (ancoras): proporcao ~1, preenchimento alto, tamanho razoavel
+    function filtrarQuadrados(blobs, w) {
+      const cands = [];
+      for (const b of blobs) {
+        const bw = b.maxX - b.minX + 1, bh = b.maxY - b.minY + 1;
+        const ratio = bw / bh;
+        const fill = b.n / (bw * bh);
+        if (ratio > 0.7 && ratio < 1.4 && fill > 0.85 && bw >= 8 && bw <= w * 0.25) {
+          cands.push({ x: b.sx / b.n, y: b.sy / b.n, area: b.n });
+        }
+      }
+      return cands;
+    }
 
-            // Estima tamanho do QR em pixels para definir janela de busca das ancoras
-            const qrPx = Math.hypot(loc.topRightCorner.x - loc.topLeftCorner.x, loc.topRightCorner.y - loc.topLeftCorner.y);
-            const raioBusca = qrPx * 0.55;
+    function areaPoligono(pts) {
+      let s = 0;
+      for (let i = 0; i < pts.length; i++) {
+        const j = (i + 1) % pts.length;
+        s += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+      }
+      return Math.abs(s) / 2;
+    }
 
-            const cantos = {
-              SE: refinarAncora(imgData, tikzParaPixel(-0.15,  7.95, loc), raioBusca),
-              SD: refinarAncora(imgData, tikzParaPixel(12.65,  7.95, loc), raioBusca),
-              IE: refinarAncora(imgData, tikzParaPixel(-0.15, -0.35, loc), raioBusca),
-              ID: refinarAncora(imgData, tikzParaPixel(12.65, -0.35, loc), raioBusca)
-            };
+    function ordenarPorAngulo(pts) {
+      const cx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
+      const cy = pts.reduce((a, p) => a + p.y, 0) / pts.length;
+      return [...pts].sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    }
 
-            const achados = Object.values(cantos).filter(Boolean).length;
-            if (achados < 4) {
-              statusEl.className = '';
-              statusEl.textContent = `QR lido! Detectados ${achados}/4 cantos. Afaste um pouco a câmera.`;
-            } else {
-              // Desenha poligono dos 4 cantos
-              ctx.strokeStyle = '#00e676';
-              ctx.lineWidth = 3;
-              ctx.beginPath();
-              ctx.moveTo(cantos.SE.x, cantos.SE.y);
-              ctx.lineTo(cantos.SD.x, cantos.SD.y);
-              ctx.lineTo(cantos.ID.x, cantos.ID.y);
-              ctx.lineTo(cantos.IE.x, cantos.IE.y);
-              ctx.closePath();
-              ctx.stroke();
-
-              // Leitura das 4 questoes
-              const larguraPx = Math.hypot(cantos.SD.x - cantos.SE.x, cantos.SD.y - cantos.SE.y);
-              const raioBolhaPx = Math.max(5, Math.round((CARD.raioBolha / CARD.W) * larguraPx * 0.85));
-              const respostas = [];
-
-              CARD.questoesY.forEach((qy, idxQ) => {
-                const v = (CARD.y0 - qy) / CARD.H;
-                let melhorLetra = '-';
-                let maiorScore = 0;
-
-                CARD.opcoesX.forEach((ox, idxO) => {
-                  const u = (ox - CARD.x0) / CARD.W;
-                  const pt = mapearUV(u, v, cantos);
-                  const score = medirEscuridao(imgData, pt, raioBolhaPx);
-
-                  ctx.beginPath();
-                  ctx.arc(pt.x, pt.y, raioBolhaPx, 0, Math.PI * 2);
-                  ctx.strokeStyle = score > 0.42 ? '#00e676' : '#2979ff';
-                  ctx.lineWidth = 2;
-                  ctx.stroke();
-
-                  if (score > 0.42 && score > maiorScore) {
-                    maiorScore = score;
-                    melhorLetra = CARD.letras[idxO];
-                  }
-                });
-                respostas.push({ q: idxQ + 1, marcada: melhorLetra, gabarito: gabaritoAtual[idxQ + 1] });
-              });
-
-              exibirResultado(respostas);
+    // Escolhe as 4 ancoras que formam o quadrilatero de maior area
+    function escolherQuatro(cands) {
+      if (cands.length < 4) return null;
+      const c = [...cands].sort((a, b) => b.area - a.area).slice(0, 10);
+      if (c.length === 4) return c;
+      let melhor = null, melhorArea = -1;
+      for (let i = 0; i < c.length; i++)
+        for (let j = i + 1; j < c.length; j++)
+          for (let k = j + 1; k < c.length; k++)
+            for (let l = k + 1; l < c.length; l++) {
+              const quad = ordenarPorAngulo([c[i], c[j], c[k], c[l]]);
+              const a = areaPoligono(quad);
+              if (a > melhorArea) { melhorArea = a; melhor = [c[i], c[j], c[k], c[l]]; }
             }
-          }
+      return melhor;
+    }
+
+    // Identifica TL, TR, BR, BL usando a orientacao do QR Code (funciona na vertical e na horizontal)
+    function ordenarCantos(pts, qr) {
+      const cx = pts.reduce((a, p) => a + p.x, 0) / 4;
+      const cy = pts.reduce((a, p) => a + p.y, 0) / 4;
+      let ex = { x: 1, y: 0 }, ey = { x: 0, y: 1 };
+      if (qr) {
+        const L = qr.location;
+        const tx = L.topRightCorner.x - L.topLeftCorner.x, ty = L.topRightCorner.y - L.topLeftCorner.y;
+        const nx = Math.hypot(tx, ty);
+        ex = { x: tx / nx, y: ty / nx };
+        const bx = L.bottomLeftCorner.x - L.topLeftCorner.x, by = L.bottomLeftCorner.y - L.topLeftCorner.y;
+        const ny = Math.hypot(bx, by);
+        ey = { x: bx / ny, y: by / ny };
+      }
+      const proj = pts.map(p => {
+        const dx = p.x - cx, dy = p.y - cy;
+        return { p, a: dx * ex.x + dy * ex.y, b: dx * ey.x + dy * ey.y };
+      });
+      const maxBy = f => proj.reduce((m, c) => (f(c) > f(m) ? c : m)).p;
+      return {
+        TL: maxBy(c => -(c.a + c.b)),
+        TR: maxBy(c => c.a - c.b),
+        BR: maxBy(c => c.a + c.b),
+        BL: maxBy(c => -(c.a - c.b))
+      };
+    }
+
+    // ---------- Homografia ----------
+
+    function resolverLinear(A, b) {
+      const n = b.length;
+      const M = A.map((r, i) => [...r, b[i]]);
+      for (let c = 0; c < n; c++) {
+        let p = c;
+        for (let r = c + 1; r < n; r++) if (Math.abs(M[r][c]) > Math.abs(M[p][c])) p = r;
+        [M[c], M[p]] = [M[p], M[c]];
+        if (Math.abs(M[c][c]) < 1e-12) return null;
+        for (let r = 0; r < n; r++) {
+          if (r === c) continue;
+          const f = M[r][c] / M[c][c];
+          for (let k = c; k <= n; k++) M[r][k] -= f * M[c][k];
         }
       }
-      requestAnimationFrame(processarFrame);
+      return M.map((r, i) => r[n] / r[i]);
     }
+
+    // Homografia que leva pontos do cartao (cm) para pixels da imagem
+    function homografia(src, dst) {
+      const A = [], b = [];
+      for (let i = 0; i < 4; i++) {
+        const { x, y } = src[i], { x: u, y: v } = dst[i];
+        A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u);
+        A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v);
+      }
+      return resolverLinear(A, b);
+    }
+
+    function aplicarH(h, x, y) {
+      const d = h[6] * x + h[7] * y + 1;
+      return { x: (h[0] * x + h[1] * y + h[2]) / d, y: (h[3] * x + h[4] * y + h[5]) / d };
+    }
+
+    // Retifica o cartao em uma imagem plana (cinza)
+    function retificar(gray, w, h, H) {
+      const S = CFG.escala;
+      const RW = Math.round(CARTAO.W * S), RH = Math.round(CARTAO.H * S);
+      const out = new Uint8Array(RW * RH);
+      for (let Y = 0; Y < RH; Y++) {
+        for (let X = 0; X < RW; X++) {
+          const p = aplicarH(H, X / S, Y / S);
+          const u = Math.round(p.x), v = Math.round(p.y);
+          out[Y * RW + X] = (u >= 0 && u < w && v >= 0 && v < h) ? gray[v * w + u] : 255;
+        }
+      }
+      return { out, RW, RH };
+    }
+
+    function percentil(arr, p) {
+      const hist = new Uint32Array(256);
+      for (let i = 0; i < arr.length; i++) hist[arr[i]]++;
+      const alvo = arr.length * p;
+      let acc = 0;
+      for (let i = 0; i < 256; i++) { acc += hist[i]; if (acc >= alvo) return i; }
+      return 255;
+    }
+
+    // ---------- Leitura das bolhas ----------
+
+    // Fracao de pixels escuros em um anel interno da bolha (ignora contorno e letra)
+    function medirPreenchimento(rect, cxCm, cyCm, paper) {
+      const S = CFG.escala;
+      const cx = cxCm * S, cy = cyCm * S;
+      const rb = CFG.raioBolha * S;
+      const rin = rb * 0.35, rout = rb * 0.8;
+      let tot = 0, esc = 0;
+      const R = Math.ceil(rout);
+      for (let dy = -R; dy <= R; dy++) {
+        for (let dx = -R; dx <= R; dx++) {
+          const d = Math.hypot(dx, dy);
+          if (d < rin || d > rout) continue;
+          const x = Math.round(cx + dx), y = Math.round(cy + dy);
+          if (x < 0 || x >= rect.RW || y < 0 || y >= rect.RH) continue;
+          tot++;
+          if (rect.out[y * rect.RW + x] < paper * 0.6) esc++;
+        }
+      }
+      return tot > 0 ? esc / tot : 0;
+    }
+
+    function lerRespostas(rect, paper, H) {
+      return CFG.questoesY.map((qy, i) => {
+        const cyCm = CARTAO.y0 - qy;
+        const marks = CFG.opcoesX.map((ox, j) => {
+          const cxCm = ox - CARTAO.x0;
+          const f = medirPreenchimento(rect, cxCm, cyCm, paper);
+          const pImg = aplicarH(H, cxCm, cyCm);
+          return { letra: CFG.letras[j], f, cheia: f >= CFG.limiarPreench, px: pImg.x, py: pImg.y };
+        });
+        const cheias = marks.filter(m => m.cheia);
+        const marcada = cheias.length === 0 ? '-' : cheias.length === 1 ? cheias[0].letra : '*';
+        return { q: i + 1, marcada, marks };
+      });
+    }
+
+    // ---------- QR (apenas identificacao da prova) ----------
+
+    function lerIdProva(texto) {
+      const m = texto.match(/ID-PROVA:([^;]+)/i);
+      return m ? m[1] : null;
+    }
+
+    // ---------- Processamento principal ----------
+
+    function processarQuadro() {
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const { data, width: w, height: h } = img;
+
+      const qr = jsQR(data, w, h, { inversionAttempts: 'dontInvert' });
+      const { gray, bin } = binarizar(data, w, h);
+      const cands = filtrarQuadrados(acharBlobs(bin, w, h), w);
+      const quad = escolherQuatro(cands);
+
+      if (!quad) {
+        deteccao = null;
+        estavel = 0;
+        ultimaChave = null;
+        statusEl.className = '';
+        statusEl.textContent = `Procurando o cartão... (âncoras: ${Math.min(cands.length, 4)}/4)`;
+        return;
+      }
+
+      const cantos = ordenarCantos(quad, qr);
+      const H = homografia(
+        [{ x: 0, y: 0 }, { x: CARTAO.W, y: 0 }, { x: CARTAO.W, y: CARTAO.H }, { x: 0, y: CARTAO.H }],
+        [cantos.TL, cantos.TR, cantos.BR, cantos.BL]
+      );
+      if (!H) { estavel = 0; return; }
+
+      if (qr) {
+        const id = lerIdProva(qr.data);
+        if (id) provaId = id;
+        tituloEl.textContent = 'Leitor Óptico' + (provaId ? ` — ${provaId}` : '');
+      }
+
+      const rect = retificar(gray, w, h, H);
+      const paper = percentil(rect.out, 0.8);
+      const respostas = lerRespostas(rect, paper, H);
+
+      deteccao = {
+        cantos: [cantos.TL, cantos.TR, cantos.BR, cantos.BL],
+        bolhas: respostas.flatMap(r => r.marks)
+      };
+
+      const duplas = respostas.filter(r => r.marcada === '*').map(r => r.q);
+      if (duplas.length) {
+        estavel = 0;
+        ultimaChave = null;
+        statusEl.className = '';
+        statusEl.textContent = `Dupla marcação na questão ${duplas.join(', ')}. Corrija o cartão.`;
+        return;
+      }
+
+      const chave = respostas.map(r => r.marcada).join('');
+      if (chave === ultimaChave) estavel++;
+      else { ultimaChave = chave; estavel = 1; }
+
+      statusEl.className = '';
+      statusEl.textContent = `Cartão detectado, mantenha firme... (${estavel}/${CFG.estaveis})`;
+
+      if (estavel >= CFG.estaveis) exibirResultado(respostas);
+    }
+
+    function desenharDeteccao() {
+      if (!deteccao) return;
+      const c = deteccao.cantos;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = '#00e676';
+      ctx.beginPath();
+      ctx.moveTo(c[0].x, c[0].y);
+      for (let i = 1; i < 4; i++) ctx.lineTo(c[i].x, c[i].y);
+      ctx.closePath();
+      ctx.stroke();
+
+      deteccao.bolhas.forEach(b => {
+        ctx.beginPath();
+        ctx.arc(b.px, b.py, 6, 0, Math.PI * 2);
+        ctx.fillStyle = b.cheia ? '#00e676' : 'rgba(41,121,255,0.6)';
+        ctx.fill();
+      });
+    }
+
+    // ---------- Resultado ----------
 
     function exibirResultado(respostas) {
       travado = true;
@@ -273,10 +450,12 @@
       statusEl.textContent = 'Cartão lido com sucesso!';
       let acertos = 0;
       const html = respostas.map(r => {
-        const ok = r.marcada === r.gabarito;
+        const gab = GABARITO[r.q];
+        const ok = r.marcada === gab;
         if (ok) acertos++;
+        const txt = r.marcada === '-' ? 'Em branco' : r.marcada;
         return `<div class="item-q ${ok ? 'correta' : 'errada'}">
-          <strong>Q0${r.q}:</strong> Marcada <b>${r.marcada}</b> (Gab: ${r.gabarito})
+          <strong>Questão ${String(r.q).padStart(2, '0')}:</strong> Marcada <b>${txt}</b> (Gab: ${gab})
         </div>`;
       }).join('');
       document.getElementById('notaTexto').textContent = `Acertos: ${acertos} / ${respostas.length}`;
@@ -286,9 +465,12 @@
 
     function reiniciarLeitura() {
       travado = false;
+      estavel = 0;
+      ultimaChave = null;
+      deteccao = null;
       resultadoEl.style.display = 'none';
       statusEl.className = '';
-      statusEl.textContent = 'Aponte para o próximo cartão...';
+      statusEl.textContent = 'Aponte a câmera para o próximo cartão...';
     }
 
     iniciarCamera();
