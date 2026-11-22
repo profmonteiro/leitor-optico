@@ -26,7 +26,13 @@
       width: 100%; max-width: 520px; margin-top: 12px; padding: 14px;
       border-radius: 12px; background: #1c1c1c; border: 1px solid #333; display: none;
     }
-    .nota-box { font-size: 1.3rem; font-weight: 800; color: #00e676; margin-bottom: 8px; }
+    .nota-box { font-size: 1.5rem; font-weight: 800; color: #00e676; margin-bottom: 2px; }
+    .sub-nota { font-size: 0.9rem; color: #bdbdbd; margin-bottom: 4px; }
+    .fonte { font-size: 0.78rem; color: #8bc34a; margin-bottom: 10px; }
+    .fonte.aviso { color: #ffb300; }
+    .item-q .pts { display: block; margin-top: 3px; font-weight: 700; }
+    .correta .pts { color: #00e676; }
+    .errada .pts { color: #ff5252; }
     .detalhes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 0.9rem; }
     .item-q { background: #262626; padding: 8px 10px; border-radius: 8px; }
     .correta { border-left: 4px solid #00e676; }
@@ -48,6 +54,8 @@
 
   <div id="resultado">
     <div class="nota-box" id="notaTexto"></div>
+    <div class="sub-nota" id="subNota"></div>
+    <div class="fonte" id="fonteProva"></div>
     <div class="detalhes" id="detalhesQuestoes"></div>
     <button onclick="reiniciarLeitura()">Ler Próximo Cartão</button>
   </div>
@@ -60,14 +68,21 @@
     const tituloEl = document.getElementById('titulo');
     const resultadoEl = document.getElementById('resultado');
 
-    // Gabarito fica somente no código (o QR Code identifica apenas a prova)
-    const GABARITO = { 1: 'B', 2: 'A', 3: 'A', 4: 'B' };
+    // ---------- Prova (gabarito + pontuação) ----------
+    // Valores de FALLBACK, usados se o QR Code não puder ser lido.
+    // Copiados do bloco [METADADOS PARA GERACAO DO LEITOR OPTICO] do LaTeX.
+    const PROVA_PADRAO = {
+      id: 'CALC1-P2-EC-T1-V2',
+      gab: { 1: 'A', 4: 'B', 5: 'D' },
+      pts: { 1: 1.5, 4: 2.0, 5: 1.0 }
+    };
 
-    // Geometria do cartão (cm), extraída do TikZ
-    // Centros das 4 âncoras: SE(-0.15, 7.95), SD(12.65, 7.95), IE(-0.15, -0.35), ID(12.65, -0.35)
-    const CARTAO = { W: 12.8, H: 8.3, x0: -0.15, y0: 7.95 };
+    // Geometria do cartão (cm), extraída do TikZ.
+    // Âncoras (centros): SE(-0.15, y0) SD(12.65, y0) IE(-0.15, -0.35) ID(12.65, -0.35)
+    // Cada questão extra acrescenta 1.2 cm de altura (3 questões: y0 = 6.75; 4 questões: y0 = 7.95).
+    const CARTAO = { W: 12.8, H: 7.1, x0: -0.15, y0: 6.75 };
     const CFG = {
-      questoesY: [4.9, 3.7, 2.5, 1.3],
+      questoesY: [3.7, 2.5, 1.3],
       opcoesX:   [4.8, 6.3, 7.8, 9.3, 10.8],
       letras:    ['A', 'B', 'C', 'D', 'E'],
       raioBolha: 0.26,   // cm
@@ -76,12 +91,77 @@
       estaveis: 3        // leituras iguais seguidas antes de pontuar
     };
 
+    // Prova ativa (preenchida pelo QR Code ou pelo fallback)
+    let PROVA = null;
+
+    function configurarGeometria(n) {
+      CARTAO.y0 = 6.75 + 1.2 * (n - 3);
+      CARTAO.H = CARTAO.y0 + 0.35;
+      CFG.questoesY = Array.from({ length: n }, (_, i) => +(1.3 + 1.2 * (n - 1 - i)).toFixed(2));
+    }
+
+    function somaPts(pts, questoes) {
+      return Math.round(questoes.reduce((a, q) => a + (pts[q] || 0), 0) * 100) / 100;
+    }
+
+    function formatarPts(v) {
+      return (Math.round(v * 100) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+    }
+
+    // Interpreta: ID-PROVA:XXX;GAB:Q1A-Q4B-Q5D;PTS:Q1=1.5-Q4=2.0-Q5=1.0
+    function interpretarQR(texto) {
+      const campos = {};
+      texto.split(';').forEach(parte => {
+        const i = parte.indexOf(':');
+        if (i > 0) campos[parte.slice(0, i).trim().toUpperCase()] = parte.slice(i + 1).trim();
+      });
+      const gab = {};
+      const reGab = /Q(\d+)\s*([A-E])/gi;
+      let m;
+      while ((m = reGab.exec(campos['GAB'] || '')) !== null) gab[parseInt(m[1], 10)] = m[2].toUpperCase();
+      const questoes = Object.keys(gab).map(Number).sort((a, b) => a - b);
+      if (!questoes.length) return null;   // QR sem gabarito: nao serve
+
+      const ptsQR = {};
+      const rePts = /Q(\d+)\s*=\s*([\d]+(?:[.,]\d+)?)/gi;
+      while ((m = rePts.exec(campos['PTS'] || '')) !== null) ptsQR[parseInt(m[1], 10)] = parseFloat(m[2].replace(',', '.'));
+
+      // Questao sem PTS no QR: tenta o fallback do comentario; senao, 1 ponto
+      const pts = {};
+      let faltou = false;
+      questoes.forEach(q => {
+        if (ptsQR[q] !== undefined) pts[q] = ptsQR[q];
+        else { faltou = true; pts[q] = PROVA_PADRAO.pts[q] !== undefined ? PROVA_PADRAO.pts[q] : 1; }
+      });
+      return {
+        id: campos['ID-PROVA'] || null, gab, pts, questoes,
+        fonte: !campos['PTS'] ? 'QR Code (sem PTS: pontos padrão)' : faltou ? 'QR Code (PTS parcial)' : 'QR Code', fonteOk: !faltou && !!campos['PTS']
+      };
+    }
+
+    function definirProva(info) {
+      const chave = JSON.stringify([info.id, info.gab, info.pts]);
+      if (PROVA && PROVA.chave === chave) return;
+      PROVA = { ...info, chave, total: somaPts(info.pts, info.questoes) };
+      configurarGeometria(info.questoes.length);
+      estavel = 0;
+      ultimaChave = null;
+      tituloEl.textContent = 'Leitor Óptico' + (PROVA.id ? ` — ${PROVA.id}` : '');
+    }
+
+    function usarProvaPadrao() {
+      const questoes = Object.keys(PROVA_PADRAO.gab).map(Number).sort((a, b) => a - b);
+      definirProva({
+        id: PROVA_PADRAO.id, gab: PROVA_PADRAO.gab, pts: PROVA_PADRAO.pts, questoes,
+        fonte: 'Padrão (QR Code não lido)', fonteOk: false
+      });
+    }
+
     let travado = false;
     let ultimoProc = 0;
     let ultimaChave = null;
     let estavel = 0;
     let deteccao = null;
-    let provaId = null;
 
     async function iniciarCamera() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -351,15 +431,8 @@
         });
         const cheias = marks.filter(m => m.cheia);
         const marcada = cheias.length === 0 ? '-' : cheias.length === 1 ? cheias[0].letra : '*';
-        return { q: i + 1, marcada, marks };
+        return { q: PROVA.questoes[i], marcada, marks };
       });
-    }
-
-    // ---------- QR (apenas identificacao da prova) ----------
-
-    function lerIdProva(texto) {
-      const m = texto.match(/ID-PROVA:([^;]+)/i);
-      return m ? m[1] : null;
     }
 
     // ---------- Processamento principal ----------
@@ -369,6 +442,11 @@
       const { data, width: w, height: h } = img;
 
       const qr = jsQR(data, w, h, { inversionAttempts: 'dontInvert' });
+      if (qr) {
+        const info = interpretarQR(qr.data);
+        if (info) definirProva(info);
+      }
+      if (!PROVA) usarProvaPadrao();   // fallback ate o QR ser lido
       const { gray, bin } = binarizar(data, w, h);
       const cands = filtrarQuadrados(acharBlobs(bin, w, h), w);
       const quad = escolherQuatro(cands);
@@ -388,12 +466,6 @@
         [cantos.TL, cantos.TR, cantos.BR, cantos.BL]
       );
       if (!H) { estavel = 0; return; }
-
-      if (qr) {
-        const id = lerIdProva(qr.data);
-        if (id) provaId = id;
-        tituloEl.textContent = 'Leitor Óptico' + (provaId ? ` — ${provaId}` : '');
-      }
 
       const rect = retificar(gray, w, h, H);
       const paper = percentil(rect.out, 0.8);
@@ -448,17 +520,26 @@
       travado = true;
       statusEl.className = 'ok';
       statusEl.textContent = 'Cartão lido com sucesso!';
-      let acertos = 0;
+      let acertos = 0, nota = 0;
       const html = respostas.map(r => {
-        const gab = GABARITO[r.q];
+        const gab = PROVA.gab[r.q];
+        const max = PROVA.pts[r.q] || 0;
         const ok = r.marcada === gab;
+        const ganho = ok ? max : 0;
         if (ok) acertos++;
-        const txt = r.marcada === '-' ? 'Em branco' : r.marcada;
+        nota += ganho;
+        const txt = r.marcada === '-' ? 'Em branco' : r.marcada === '*' ? 'Dupla' : r.marcada;
         return `<div class="item-q ${ok ? 'correta' : 'errada'}">
           <strong>Questão ${String(r.q).padStart(2, '0')}:</strong> Marcada <b>${txt}</b> (Gab: ${gab})
+          <span class="pts">${formatarPts(ganho)} / ${formatarPts(max)} pts</span>
         </div>`;
       }).join('');
-      document.getElementById('notaTexto').textContent = `Acertos: ${acertos} / ${respostas.length}`;
+      nota = Math.round(nota * 100) / 100;
+      document.getElementById('notaTexto').textContent = `Nota: ${formatarPts(nota)} / ${formatarPts(PROVA.total)}`;
+      document.getElementById('subNota').textContent = `Acertos: ${acertos} / ${respostas.length}`;
+      const fonteEl = document.getElementById('fonteProva');
+      fonteEl.textContent = `Gabarito e pontuação: ${PROVA.fonte}`;
+      fonteEl.className = 'fonte' + (PROVA.fonteOk ? '' : ' aviso');
       document.getElementById('detalhesQuestoes').innerHTML = html;
       resultadoEl.style.display = 'block';
     }
